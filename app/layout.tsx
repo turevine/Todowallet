@@ -11,9 +11,10 @@ export const metadata: Metadata = {
   title: 'TodoWallet - 한 일은 사라지지 않는다',
   description: '당신의 할 일을 카드처럼 관리하세요',
   generator: 'v0.app',
+  manifest: '/site.webmanifest',
   icons: {
     icon: [{ url: "/todowallet-logo.svg", type: "image/svg+xml" }],
-    apple: '/apple-icon.png',
+    apple: [{ url: "/apple-icon.png", type: "image/png" }],
   },
 }
 
