@@ -262,8 +262,26 @@ interface AppContextType extends AppState {
 
 const AppContext = createContext<AppContextType | null>(null);
 const STORAGE_KEY = "todowallet_v3_light";
+const SUPABASE_STATE_TABLE = "user_wallet_data";
 
 const DEFAULT_PROFILE: Profile = { name: "나", job: "직업 입력", age: "나이 입력", vision: "비전 입력", avatarColor: "#2563EB" };
+
+type SyncedAppState = Pick<AppState, "profile" | "masterCards" | "presetCards" | "regularCards" | "recipeCards" | "redeemedCouponIds">;
+
+function normalizeSyncedState(raw: unknown): SyncedAppState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Partial<SyncedAppState>;
+  return {
+    profile: obj.profile ?? DEFAULT_PROFILE,
+    masterCards: Array.isArray(obj.masterCards) ? obj.masterCards : [],
+    presetCards: Array.isArray(obj.presetCards) ? obj.presetCards : [],
+    regularCards: Array.isArray(obj.regularCards) ? obj.regularCards : [],
+    recipeCards: Array.isArray(obj.recipeCards) ? obj.recipeCards : [],
+    redeemedCouponIds: Array.isArray(obj.redeemedCouponIds)
+      ? obj.redeemedCouponIds.map((x) => String(x))
+      : [],
+  };
+}
 
 function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
@@ -301,6 +319,9 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   // tick을 별도 state로 분리 → tick 변경이 localStorage 쓰기를 트리거하지 않음
   const [tick, setTick] = useState(0);
+  const cloudUserIdRef = useRef<string | null>(null);
+  const cloudHydratedRef = useRef(false);
+  const cloudSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const iv = setInterval(() => setTick((t) => t + 1), 1000);
@@ -365,6 +386,46 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   const authReady = state.authReady;
   const isLoggedIn = state.isLoggedIn;
+
+  useEffect(() => {
+    if (!authReady || !isLoggedIn || !isSupabaseConfigured()) {
+      cloudUserIdRef.current = null;
+      cloudHydratedRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const sb = getSupabase();
+      const { data: { user } } = await sb.auth.getUser();
+      if (cancelled) return;
+      const userId = user?.id ?? null;
+      cloudUserIdRef.current = userId;
+      cloudHydratedRef.current = false;
+      if (!userId) return;
+
+      const { data, error } = await sb
+        .from(SUPABASE_STATE_TABLE)
+        .select("payload")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.warn("[sync] failed to load state from Supabase:", error.message);
+        cloudHydratedRef.current = true;
+        return;
+      }
+      const normalized = normalizeSyncedState(data?.payload);
+      if (normalized) {
+        setState((s) => ({ ...s, ...normalized }));
+      }
+      cloudHydratedRef.current = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, isLoggedIn]);
+
   useEffect(() => {
     if (!authReady) return;
     if (!isSupabaseConfigured() || !isLoggedIn) {
@@ -386,6 +447,46 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [authReady, isLoggedIn]);
+
+  useEffect(() => {
+    if (!authReady || !isLoggedIn || !isSupabaseConfigured()) return;
+    if (!cloudHydratedRef.current) return;
+    const userId = cloudUserIdRef.current;
+    if (!userId) return;
+
+    if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+    const payload: SyncedAppState = {
+      profile: stProfile,
+      masterCards: stMaster,
+      presetCards: stPreset,
+      regularCards: stRegular,
+      recipeCards: stRecipe,
+      redeemedCouponIds: stCoupons,
+    };
+    cloudSaveTimerRef.current = setTimeout(() => {
+      void (async () => {
+        const { error } = await getSupabase()
+          .from(SUPABASE_STATE_TABLE)
+          .upsert(
+            {
+              user_id: userId,
+              payload,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id" },
+          );
+        if (error) {
+          console.warn("[sync] failed to save state to Supabase:", error.message);
+        }
+      })();
+    }, 700);
+
+    return () => {
+      if (cloudSaveTimerRef.current) {
+        clearTimeout(cloudSaveTimerRef.current);
+      }
+    };
+  }, [authReady, isLoggedIn, stProfile, stMaster, stPreset, stRegular, stRecipe, stCoupons]);
 
   const update = useCallback((updater: (s: AppState) => Partial<AppState>) => setState((s) => ({ ...s, ...updater(s) })), []);
 
