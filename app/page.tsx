@@ -262,6 +262,7 @@ interface AppContextType extends AppState {
 const AppContext = createContext<AppContextType | null>(null);
 const STORAGE_KEY = "todowallet_v3_light";
 const SUPABASE_STATE_TABLE = "user_wallet_data";
+const AUTO_LOGIN_PREF_KEY = "todowallet.autoLogin";
 
 const DEFAULT_PROFILE: Profile = { name: "나", job: "직업 입력", age: "나이 입력", vision: "비전 입력", avatarColor: "#2563EB" };
 
@@ -408,6 +409,19 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       const sb = getSupabase();
       void sb.auth.getSession().then(({ data: { session } }) => {
         if (cancelled) return;
+        const allowAutoLogin = (() => {
+          try {
+            return localStorage.getItem(AUTO_LOGIN_PREF_KEY) !== "false";
+          } catch {
+            return true;
+          }
+        })();
+        if (session && !allowAutoLogin) {
+          void sb.auth.signOut().finally(() => {
+            if (!cancelled) setState((s) => ({ ...s, isLoggedIn: false }));
+          });
+          return;
+        }
         setState((s) => ({ ...s, isLoggedIn: !!session }));
       }).finally(() => {
         if (!cancelled) setState((s) => ({ ...s, authReady: true }));
@@ -818,9 +832,18 @@ function LoginScreen() {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [autoLogin, setAutoLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      setAutoLogin(localStorage.getItem(AUTO_LOGIN_PREF_KEY) !== "false");
+    } catch {
+      setAutoLogin(true);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -882,6 +905,11 @@ function LoginScreen() {
           setError(signInErr.message);
           return;
         }
+      }
+      try {
+        localStorage.setItem(AUTO_LOGIN_PREF_KEY, autoLogin ? "true" : "false");
+      } catch {
+        // ignore localStorage failures
       }
     } finally {
       setLoading(false);
@@ -963,6 +991,16 @@ function LoginScreen() {
               placeholder="6자 이상"
             />
           </div>
+        </label>
+
+        <label className="flex items-center gap-2 px-1 py-1 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={autoLogin}
+            onChange={(e) => setAutoLogin(e.target.checked)}
+            className="accent-blue-600"
+          />
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>자동 로그인 유지</span>
         </label>
 
         {error && (
