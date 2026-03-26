@@ -62,3 +62,13 @@ export async function saveAdminStore(store: AdminStore): Promise<void> {
 export function newId() {
   return randomBytes(12).toString("hex");
 }
+
+export function generatePrivilegeCode(length = 8) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const size = Math.max(4, Math.min(32, Math.floor(length)));
+  let out = "";
+  for (let i = 0; i < size; i += 1) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
