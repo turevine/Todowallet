@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
 import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, BookOpen, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2 } from "lucide-react";
-import { createClient } from "@supabase/supabase-js";
 import { BrandLogo } from "@/components/brand-logo";
 import { getSupabase, isSupabaseConfigured, setSupabaseRuntimeConfig } from "@/lib/supabase/client";
 
@@ -850,9 +849,7 @@ function LoginScreen() {
       return;
     }
     setSupabaseRuntimeConfig(supabaseUrl, supabaseAnon);
-    const sb = createClient(supabaseUrl, supabaseAnon, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-    });
+    const sb = getSupabase();
     const trimmed = email.trim();
     if (!trimmed || !password) {
       setError("이메일과 비밀번호를 입력해 주세요.");
@@ -1738,9 +1735,13 @@ function HomeScreen() {
     setChecklists(prev => {
       const updated = updater(prev[cardId] ?? []);
       try { localStorage.setItem(`checklist_${cardId}`, JSON.stringify(updated)); } catch {}
-      try { window.dispatchEvent(new Event("todowallet:checklist-updated")); } catch {}
       return { ...prev, [cardId]: updated };
     });
+    try {
+      window.dispatchEvent(new Event("todowallet:checklist-updated"));
+    } catch {
+      // ignore browser event dispatch failures
+    }
   };
 
   const addCheckItem = () => {

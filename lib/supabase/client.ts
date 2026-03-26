@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 /** 빌드 시 인라인되는 값 — Turbopack 캐시 등으로 비어 있을 수 있음 */
 const envUrl = () => (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
 const envAnon = () => (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
+export const SUPABASE_AUTH_STORAGE_KEY = "todowallet.auth.token";
 
 /** `/api/auth/public-config` 로 채움 (런타임) */
 let runtimeUrl = "";
@@ -39,6 +40,7 @@ export function getSupabase(): SupabaseClient {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      storageKey: SUPABASE_AUTH_STORAGE_KEY,
     },
   });
   return client;
