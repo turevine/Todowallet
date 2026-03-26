@@ -289,6 +289,31 @@ function readChecklistMapFromLocalStorage(): Record<string, ChecklistItem[]> {
   return out;
 }
 
+function readChecklistMapFromMainStorage(): Record<string, ChecklistItem[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as { checklistByCard?: Record<string, ChecklistItem[]> };
+    if (!parsed.checklistByCard || typeof parsed.checklistByCard !== "object") return {};
+    return parsed.checklistByCard;
+  } catch {
+    return {};
+  }
+}
+
+function writeChecklistMapToMainStorage(next: Record<string, ChecklistItem[]>) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, checklistByCard: next }));
+  } catch {
+    // ignore localStorage parse/write failures
+  }
+}
+
 function replaceChecklistMapInLocalStorage(next: Record<string, ChecklistItem[]>) {
   if (typeof window === "undefined") return;
   try {
@@ -382,6 +407,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         regularCards: stRegular,
         recipeCards: stRecipe,
         redeemedCouponIds: stCoupons,
+        checklistByCard: readChecklistMapFromLocalStorage(),
       }));
     } catch {}
   }, [stProfile, stMaster, stPreset, stRegular, stRecipe, stCoupons]);
@@ -484,7 +510,13 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         const { checklistByCard = {}, ...rest } = normalized;
         setState((s) => ({ ...s, ...rest }));
         replaceChecklistMapInLocalStorage(checklistByCard);
+        writeChecklistMapToMainStorage(checklistByCard);
         setChecklistSyncTick((t) => t + 1);
+        try {
+          window.dispatchEvent(new Event("todowallet:checklist-updated"));
+        } catch {
+          // ignore browser event dispatch failures
+        }
       }
       cloudHydratedRef.current = true;
     })();
@@ -1649,7 +1681,9 @@ function HomeScreen() {
   const swipeThreshold = 120;
   const didSwipeRef = useRef(false);
   const [checklists, setChecklists] = useState<Record<string, ChecklistItem[]>>(() => {
-    return readChecklistMapFromLocalStorage();
+    const fromKeys = readChecklistMapFromLocalStorage();
+    if (Object.keys(fromKeys).length > 0) return fromKeys;
+    return readChecklistMapFromMainStorage();
   });
   const [newCheckItem, setNewCheckItem] = useState("");
   /** 카드별 체크리스트 페이지 (0부터, 페이지당 CHECKLIST_ITEMS_PER_PAGE개) */
@@ -1664,6 +1698,10 @@ function HomeScreen() {
       window.removeEventListener("todowallet:checklist-updated", reload as EventListener);
     };
   }, []);
+
+  useEffect(() => {
+    writeChecklistMapToMainStorage(checklists);
+  }, [checklists]);
 
   const activeRegular = useMemo(() => {
     void tick;
