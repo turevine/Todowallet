@@ -266,7 +266,45 @@ const SUPABASE_STATE_TABLE = "user_wallet_data";
 
 const DEFAULT_PROFILE: Profile = { name: "나", job: "직업 입력", age: "나이 입력", vision: "비전 입력", avatarColor: "#2563EB" };
 
-type SyncedAppState = Pick<AppState, "profile" | "masterCards" | "presetCards" | "regularCards" | "recipeCards" | "redeemedCouponIds">;
+type SyncedAppState = Pick<AppState, "profile" | "masterCards" | "presetCards" | "regularCards" | "recipeCards" | "redeemedCouponIds"> & {
+  checklistByCard: Record<string, ChecklistItem[]>;
+};
+
+function readChecklistMapFromLocalStorage(): Record<string, ChecklistItem[]> {
+  if (typeof window === "undefined") return {};
+  const out: Record<string, ChecklistItem[]> = {};
+  try {
+    const keys = Object.keys(localStorage);
+    for (const key of keys) {
+      if (!key.startsWith("checklist_")) continue;
+      const cardId = key.slice("checklist_".length);
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) out[cardId] = parsed as ChecklistItem[];
+    }
+  } catch {
+    // ignore localStorage parse failures
+  }
+  return out;
+}
+
+function replaceChecklistMapInLocalStorage(next: Record<string, ChecklistItem[]>) {
+  if (typeof window === "undefined") return;
+  try {
+    const keys = Object.keys(localStorage);
+    for (const key of keys) {
+      if (key.startsWith("checklist_")) {
+        localStorage.removeItem(key);
+      }
+    }
+    for (const [cardId, list] of Object.entries(next)) {
+      localStorage.setItem(`checklist_${cardId}`, JSON.stringify(list));
+    }
+  } catch {
+    // ignore localStorage write failures
+  }
+}
 
 function normalizeSyncedState(raw: unknown): SyncedAppState | null {
   if (!raw || typeof raw !== "object") return null;
@@ -280,6 +318,10 @@ function normalizeSyncedState(raw: unknown): SyncedAppState | null {
     redeemedCouponIds: Array.isArray(obj.redeemedCouponIds)
       ? obj.redeemedCouponIds.map((x) => String(x))
       : [],
+    checklistByCard:
+      obj.checklistByCard && typeof obj.checklistByCard === "object"
+        ? obj.checklistByCard
+        : {},
   };
 }
 
@@ -319,6 +361,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   // tick을 별도 state로 분리 → tick 변경이 localStorage 쓰기를 트리거하지 않음
   const [tick, setTick] = useState(0);
+  const [checklistSyncTick, setChecklistSyncTick] = useState(0);
   const cloudUserIdRef = useRef<string | null>(null);
   const cloudHydratedRef = useRef(false);
   const cloudSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -388,6 +431,15 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const isLoggedIn = state.isLoggedIn;
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onChecklistUpdated = () => setChecklistSyncTick((t) => t + 1);
+    window.addEventListener("todowallet:checklist-updated", onChecklistUpdated as EventListener);
+    return () => {
+      window.removeEventListener("todowallet:checklist-updated", onChecklistUpdated as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!authReady || !isLoggedIn || !isSupabaseConfigured()) {
       cloudUserIdRef.current = null;
       cloudHydratedRef.current = false;
@@ -416,7 +468,10 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       }
       const normalized = normalizeSyncedState(data?.payload);
       if (normalized) {
-        setState((s) => ({ ...s, ...normalized }));
+        const { checklistByCard = {}, ...rest } = normalized;
+        setState((s) => ({ ...s, ...rest }));
+        replaceChecklistMapInLocalStorage(checklistByCard);
+        setChecklistSyncTick((t) => t + 1);
       }
       cloudHydratedRef.current = true;
     })();
@@ -455,13 +510,14 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     if (!userId) return;
 
     if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
-    const payload: SyncedAppState = {
+    const payload: SyncedAppState & { checklistByCard: Record<string, ChecklistItem[]> } = {
       profile: stProfile,
       masterCards: stMaster,
       presetCards: stPreset,
       regularCards: stRegular,
       recipeCards: stRecipe,
       redeemedCouponIds: stCoupons,
+      checklistByCard: readChecklistMapFromLocalStorage(),
     };
     cloudSaveTimerRef.current = setTimeout(() => {
       void (async () => {
@@ -486,7 +542,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         clearTimeout(cloudSaveTimerRef.current);
       }
     };
-  }, [authReady, isLoggedIn, stProfile, stMaster, stPreset, stRegular, stRecipe, stCoupons]);
+  }, [authReady, isLoggedIn, stProfile, stMaster, stPreset, stRegular, stRecipe, stCoupons, checklistSyncTick]);
 
   const update = useCallback((updater: (s: AppState) => Partial<AppState>) => setState((s) => ({ ...s, ...updater(s) })), []);
 
@@ -1558,24 +1614,21 @@ function HomeScreen() {
   const swipeThreshold = 120;
   const didSwipeRef = useRef(false);
   const [checklists, setChecklists] = useState<Record<string, ChecklistItem[]>>(() => {
-    if (typeof window === "undefined") return {};
-    const result: Record<string, ChecklistItem[]> = {};
-    try {
-      const keys = Object.keys(localStorage);
-      keys.forEach(key => {
-        if (key.startsWith("checklist_")) {
-          const id = key.replace("checklist_", "");
-          const parsed = JSON.parse(localStorage.getItem(key) || "[]");
-          if (Array.isArray(parsed)) result[id] = parsed;
-        }
-      });
-    } catch {}
-    return result;
+    return readChecklistMapFromLocalStorage();
   });
   const [newCheckItem, setNewCheckItem] = useState("");
   /** 카드별 체크리스트 페이지 (0부터, 페이지당 CHECKLIST_ITEMS_PER_PAGE개) */
   const [checklistPageByCard, setChecklistPageByCard] = useState<Record<string, number>>({});
   const checklistSwipeRef = useRef<{ cardId: string; x: number } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const reload = () => setChecklists(readChecklistMapFromLocalStorage());
+    window.addEventListener("todowallet:checklist-updated", reload as EventListener);
+    return () => {
+      window.removeEventListener("todowallet:checklist-updated", reload as EventListener);
+    };
+  }, []);
 
   const activeRegular = useMemo(() => {
     void tick;
@@ -1685,6 +1738,7 @@ function HomeScreen() {
     setChecklists(prev => {
       const updated = updater(prev[cardId] ?? []);
       try { localStorage.setItem(`checklist_${cardId}`, JSON.stringify(updated)); } catch {}
+      try { window.dispatchEvent(new Event("todowallet:checklist-updated")); } catch {}
       return { ...prev, [cardId]: updated };
     });
   };
