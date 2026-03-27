@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
-import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, BookOpen, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2 } from "lucide-react";
+import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, BookOpen, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2, Moon, Sun, BarChart2, Zap } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { getSupabase, isSupabaseConfigured, setSupabaseRuntimeConfig } from "@/lib/supabase/client";
 
@@ -277,6 +277,8 @@ interface AppContextType extends AppState {
   endBreak: (cardId: string) => void;
   getLiveWorkSeconds: (card: RegularCard) => number;
   getLiveBreakSeconds: (card: RegularCard) => number;
+  theme: "light" | "dark";
+  setTheme: (t: "light" | "dark") => void;
 }
 
 // ═══════════════════════════════════════════
@@ -420,6 +422,18 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   // tick을 별도 state로 분리 → tick 변경이 localStorage 쓰기를 트리거하지 않음
   const [tick, setTick] = useState(0);
   const [checklistSyncTick, setChecklistSyncTick] = useState(0);
+  const [theme, setThemeState] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    return (localStorage.getItem("todowallet_theme_v1") as "light" | "dark") ?? "light";
+  });
+  const setTheme = useCallback((t: "light" | "dark") => {
+    setThemeState(t);
+    localStorage.setItem("todowallet_theme_v1", t);
+    document.documentElement.setAttribute("data-theme", t);
+  }, []);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
   const cloudUserIdRef = useRef<string | null>(null);
   const cloudHydratedRef = useRef(false);
   const cloudSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -682,7 +696,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   }, [update]);
 
   // actions를 useMemo로 안정화 → 매 렌더마다 새 객체 생성 방지
-  const actions: Omit<AppContextType, keyof AppState | "pendingUndo"> = useMemo(() => ({
+  const actions: Omit<AppContextType, keyof AppState | "pendingUndo" | "theme" | "setTheme"> = useMemo(() => ({
     logout: async () => {
       if (isSupabaseConfigured()) {
         await getSupabase().auth.signOut();
@@ -876,8 +890,8 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Context value를 메모이제이션 → 불필요한 consumer 리렌더 방지
   const contextValue = useMemo<AppContextType>(
-    () => ({ ...state, tick, ...actions, pendingUndo }),
-    [state, tick, actions, pendingUndo],
+    () => ({ ...state, tick, ...actions, pendingUndo, theme, setTheme }),
+    [state, tick, actions, pendingUndo, theme, setTheme],
   );
 
   return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;
@@ -1083,6 +1097,49 @@ function LoginScreen() {
         >
           {loading ? <Loader2 size={18} className="animate-spin" /> : null}
           {mode === "signup" ? "이메일로 가입하기" : "로그인"}
+        </button>
+
+        <div className="flex items-center gap-3 my-1">
+          <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+          <span className="text-xs" style={{ color: "var(--text-faint)" }}>또는</span>
+          <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+        </div>
+
+        <button
+          type="button"
+          disabled={loading}
+          className="btn-press w-full flex items-center justify-center gap-3 rounded-2xl py-3.5 font-semibold text-sm cursor-pointer disabled:opacity-60"
+          style={{ background: "var(--surface-1)", color: "var(--fg)", border: "1px solid var(--border)" }}
+          onClick={async () => {
+            setError(null);
+            setInfo(null);
+            const origin = typeof window !== "undefined" ? window.location.origin : "";
+            try {
+              const res = await fetch(`${origin}/api/auth/public-config`, { cache: "no-store" });
+              const data = (await res.json()) as { url?: string; anonKey?: string };
+              const u = (data.url ?? "").trim();
+              const a = (data.anonKey ?? "").trim();
+              if (!u || !a) { setError("Supabase 설정이 없습니다."); return; }
+              setSupabaseRuntimeConfig(u, a);
+            } catch {
+              setError("네트워크 오류로 설정을 불러오지 못했습니다.");
+              return;
+            }
+            const sb = getSupabase();
+            const { error: oauthErr } = await sb.auth.signInWithOAuth({
+              provider: "google",
+              options: { redirectTo: typeof window !== "undefined" ? `${window.location.origin}/` : undefined },
+            });
+            if (oauthErr) setError(oauthErr.message);
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+            <path d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" fill="#FFC107"/>
+            <path d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" fill="#FF3D00"/>
+            <path d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" fill="#4CAF50"/>
+            <path d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" fill="#1976D2"/>
+          </svg>
+          Google로 계속하기
         </button>
         </form>
       </div>
@@ -1808,6 +1865,35 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   /** 카드별 체크리스트 페이지 (0부터, 페이지당 CHECKLIST_ITEMS_PER_PAGE개) */
   const [checklistPageByCard, setChecklistPageByCard] = useState<Record<string, number>>({});
   const checklistSwipeRef = useRef<{ cardId: string; x: number } | null>(null);
+  // 삭제 undo
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const pendingDeleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerDelete = useCallback((cardId: string) => {
+    if (pendingDeleteTimerRef.current) clearTimeout(pendingDeleteTimerRef.current);
+    setPendingDeleteId(cardId);
+    pendingDeleteTimerRef.current = setTimeout(() => {
+      deleteRegularCard(cardId);
+      setPendingDeleteId(null);
+      pendingDeleteTimerRef.current = null;
+    }, 5000);
+  }, [deleteRegularCard]);
+  const undoDelete = () => {
+    if (pendingDeleteTimerRef.current) clearTimeout(pendingDeleteTimerRef.current);
+    setPendingDeleteId(null);
+  };
+  // 오늘 완료 리캡
+  const [recapTrigger, setRecapTrigger] = useState<string | null>(null);
+  const [recapData, setRecapData] = useState<{ count: number; totalSeconds: number } | null>(null);
+  const [showRecap, setShowRecap] = useState(false);
+  useEffect(() => {
+    if (!recapTrigger) return;
+    const todayStr = new Date().toISOString().split("T")[0];
+    const completed = regularCards.filter((c) => c.isCompleted && c.completedAt?.startsWith(todayStr));
+    const totalSeconds = completed.reduce((s, c) => s + (c.totalWorkSeconds || 0), 0);
+    setRecapData({ count: completed.length, totalSeconds });
+    setShowRecap(true);
+    setRecapTrigger(null);
+  }, [recapTrigger, regularCards]);
   const [goalBannerIndex, setGoalBannerIndex] = useState(0);
   const goalBannerSwipeRef = useRef<number | null>(null);
   const [completingCardId, setCompletingCardId] = useState<string | null>(null);
@@ -1854,8 +1940,8 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
 
   const activeRegular = useMemo(() => {
     void tick;
-    return regularCards.filter((c) => regularVisibleToday(c, new Date()));
-  }, [regularCards, tick]);
+    return regularCards.filter((c) => regularVisibleToday(c, new Date()) && c.id !== pendingDeleteId);
+  }, [regularCards, tick, pendingDeleteId]);
   const homeMasterPages = useMemo(() => {
     const ids = Array.from(new Set(activeRegular.map((c) => c.masterId)));
     return ids
@@ -1974,12 +2060,14 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   
   const triggerCompletion = (cardId: string) => {
     if (completingCardId) return;
+    const isLast = activeRegular.filter((c) => !c.isCompleted && c.id !== cardId).length === 0;
     setCompletingCardId(cardId);
     if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
     completionTimerRef.current = setTimeout(() => {
       completeRegularCard(cardId);
       setCompletingCardId(null);
       setFocusedId((prev) => (prev === cardId ? null : prev));
+      if (isLast) setRecapTrigger(cardId);
       completionTimerRef.current = null;
     }, 880);
   };
@@ -2065,7 +2153,7 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   };
   const handleTouchEnd = () => {
     if (swipeCardId && Math.abs(swipeX) > swipeThreshold) {
-      if (swipeX < -swipeThreshold) { deleteRegularCard(swipeCardId); }
+      if (swipeX < -swipeThreshold) { triggerDelete(swipeCardId); }
       else if (swipeX > swipeThreshold) { triggerCompletion(swipeCardId); }
     }
     swipeStartRef.current = null; setSwipeCardId(null); setSwipeX(0);
@@ -2093,7 +2181,7 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
       setSwipeX(0);
       if (ref && Math.abs(finalX) > swipeThreshold) {
         setTimeout(() => {
-          if (finalX < -swipeThreshold) deleteRegularCard(ref.id);
+          if (finalX < -swipeThreshold) triggerDelete(ref.id);
           else if (finalX > swipeThreshold) triggerCompletion(ref.id);
         }, 0);
       }
@@ -2117,6 +2205,10 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   if (visibleRegular.length === 0) {
     return (
       <div className="relative w-full h-full overflow-auto">
+        {pendingDeleteId && (
+          <PendingDeleteBar cardName={regularCards.find((c) => c.id === pendingDeleteId)?.name ?? ""} onUndo={undoDelete} />
+        )}
+        {showRecap && recapData && <DailyRecapSheet data={recapData} onClose={() => setShowRecap(false)} />}
         {!focusedId && yesterdayStats && (
           <div className="mt-3" style={{ maxWidth: 500, margin: "12px auto 0" }}>
             <YesterdayBanner
@@ -2275,6 +2367,9 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   if (reorderMode) {
     return (
       <div className="relative w-full h-full overflow-auto">
+        {pendingDeleteId && (
+          <PendingDeleteBar cardName={regularCards.find((c) => c.id === pendingDeleteId)?.name ?? ""} onUndo={undoDelete} />
+        )}
         <div className="flex justify-center" style={{ padding: "8px 20px 0" }}>
           <div className="w-full" style={{ maxWidth: 460 }}>
             <div className="flex items-center justify-between mb-3">
@@ -2315,6 +2410,15 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
 
   return (
     <div className="relative w-full h-full" style={{ overflow: focusedId ? "hidden" : "auto" }}>
+      {pendingDeleteId && (
+        <PendingDeleteBar cardName={regularCards.find((c) => c.id === pendingDeleteId)?.name ?? ""} onUndo={undoDelete} />
+      )}
+      {showRecap && recapData && <DailyRecapSheet data={recapData} onClose={() => setShowRecap(false)} />}
+      {!focusedId && !pendingDeleteId && (
+        <div className="px-5 pt-2 pb-1 flex justify-end" style={{ maxWidth: 500, margin: "0 auto" }}>
+          <WeeklyHeatmap regularCards={regularCards} />
+        </div>
+      )}
       {!focusedId && homeMasterPages.length > 0 && (
         <div className="px-5 mb-2" style={{ maxWidth: 500, margin: "0 auto" }}>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -2810,7 +2914,11 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
                       style={{ background: "var(--surface-1)", color: "var(--fg)", border: "1px solid var(--border)", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}
                       onClick={(e) => { e.stopPropagation(); handleEndWork(); }}
                     >
-                      <Check size={20} strokeWidth={3} /> 퇴근하기
+                      <Check size={20} strokeWidth={3} />
+                      <div className="flex flex-col items-start">
+                        <span>퇴근하기</span>
+                        <span className="text-[10px] font-normal opacity-50">작업 중단, 카드는 남아요</span>
+                      </div>
                     </button>
                     <button 
                       className="btn-press py-4 px-5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm cursor-pointer"
@@ -3721,6 +3829,57 @@ function VaultScreen() {
                   </p>
                 </div>
               </div>
+
+              {/* 4주 바 차트 */}
+              {(() => {
+                const getMonday = (d: Date) => { const day = d.getDay(); const diff = d.getDate() - ((day + 6) % 7); const m = new Date(d); m.setDate(diff); return m.toISOString().split("T")[0]; };
+                const weeks = Array.from({ length: 4 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - i * 7); return getMonday(d); }).reverse();
+                const weeklySeconds = weeks.map((mon) => {
+                  const sun = new Date(mon); sun.setDate(sun.getDate() + 6); const sunStr = sun.toISOString().split("T")[0];
+                  return children.filter((c) => c.date >= mon && c.date <= sunStr).reduce((s, c) => s + (c.totalWorkSeconds || 0), 0);
+                });
+                const maxSec = Math.max(...weeklySeconds, 1);
+                if (weeklySeconds.every((s) => s === 0)) return null;
+                return (
+                  <div className="mt-3 rounded-xl p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                    <p className="text-[10px] font-semibold mb-2 flex items-center gap-1" style={{ color: "var(--text-faint)" }}>
+                      <BarChart2 size={11} /> 최근 4주 작업시간
+                    </p>
+                    <div className="flex items-end gap-2 h-10">
+                      {weeklySeconds.map((sec, i) => (
+                        <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                          <div className="w-full rounded-sm" style={{ height: `${Math.round((sec / maxSec) * 36) + 2}px`, background: i === 3 ? "rgba(var(--brand-rgb),0.85)" : "rgba(var(--brand-rgb),0.32)", minHeight: 2 }} />
+                          <span className="text-[8px]" style={{ color: "var(--text-faint)" }}>{i === 3 ? "이번" : `${4 - i}주전`}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 목표 진척도 */}
+              {selected.hasGoal && selected.goalDeadline && (() => {
+                const start = new Date(selected.createdAt).getTime();
+                const end = new Date(selected.goalDeadline).getTime();
+                const now = Date.now();
+                const total = end - start;
+                const elapsed = now - start;
+                const pct = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
+                const daysLeft = Math.max(0, Math.ceil((end - now) / 86400000));
+                return (
+                  <div className="mt-2 rounded-xl p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] font-semibold" style={{ color: "var(--text-faint)" }}>목표 기한 진척도</p>
+                      <p className="text-[10px] font-bold" style={{ color: pct >= 80 ? "#EF4444" : "var(--gold-dim)" }}>{daysLeft > 0 ? `D-${daysLeft}` : "기한 초과"}</p>
+                    </div>
+                    <div className="w-full rounded-full h-1.5" style={{ background: "var(--surface-3)" }}>
+                      <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: pct >= 80 ? "#EF4444" : "var(--gradient-cta)", transition: "width 0.4s" }} />
+                    </div>
+                    <p className="text-[9px] mt-1" style={{ color: "var(--text-faint)" }}>경과 {pct}% · 완료율 {completionRate}%</p>
+                  </div>
+                );
+              })()}
+
               <div className="flex flex-col gap-2 mt-2">
                 <button
                   type="button"
@@ -3909,6 +4068,34 @@ function VaultScreen() {
           </div>
         </div>
       )}
+      {!focusedMasterId && (() => {
+        const totalCompleted = regularCards.filter((c) => c.isCompleted).length;
+        const milestones = [
+          { count: 10, label: "첫 발걸음", emoji: "🌱" },
+          { count: 50, label: "반의 반", emoji: "⚡" },
+          { count: 100, label: "세 자리", emoji: "🏆" },
+        ];
+        const reached = milestones.filter((m) => totalCompleted >= m.count);
+        if (reached.length === 0) return null;
+        return (
+          <div className="mb-4 rounded-xl p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            <p className="text-[10px] font-semibold mb-2 tracking-wide" style={{ color: "var(--text-faint)" }}>누적 카드 마일스톤 · 완료 {totalCompleted}개</p>
+            <div className="flex gap-2">
+              {milestones.map((m) => {
+                const done = totalCompleted >= m.count;
+                return (
+                  <div key={m.count} className="flex-1 flex flex-col items-center gap-1 rounded-lg py-2 px-1" style={{ background: done ? "rgba(var(--brand-rgb),0.08)" : "var(--surface-3)", border: `1px solid ${done ? "rgba(var(--brand-rgb),0.25)" : "var(--border)"}`, opacity: done ? 1 : 0.45 }}>
+                    <span className="text-lg">{m.emoji}</span>
+                    <span className="text-[10px] font-bold" style={{ color: done ? "var(--gold-dim)" : "var(--text-faint)" }}>{m.count}개</span>
+                    <span className="text-[9px] text-center" style={{ color: "var(--text-faint)" }}>{m.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {renderMasterStack()}
       {!focusedMasterId && (
         <div className="fixed left-5 right-5 z-[220]" style={{ bottom: 104 }}>
@@ -4576,7 +4763,7 @@ function ProfileModalContent({
   startEditing?: boolean;
   isWelcome?: boolean;
 }) {
-  const { isAdmin, applyCouponCode } = useApp();
+  const { isAdmin, applyCouponCode, theme, setTheme } = useApp();
   const [editing, setEditing] = useState(startEditing);
   const [showSettings, setShowSettings] = useState(false);
   const [draft, setDraft] = useState(profile);
@@ -4636,6 +4823,18 @@ function ProfileModalContent({
                 </div>
               </div>
               {settingsMsg ? <p className="text-xs px-1" style={{ color: settingsMsg.includes("없") || settingsMsg.includes("유효") || settingsMsg.includes("만료") || settingsMsg.includes("소진") ? "#EF4444" : "var(--gold-dim)" }}>{settingsMsg}</p> : null}
+              <button
+                type="button"
+                className="btn-press w-full py-4 rounded-xl flex items-center gap-3 px-4 cursor-pointer"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              >
+                {theme === "dark" ? <Sun size={20} style={{ color: "var(--text-muted)" }} /> : <Moon size={20} style={{ color: "var(--text-muted)" }} />}
+                <span className="text-sm font-semibold" style={{ color: "var(--fg)" }}>{theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}</span>
+                <div className="ml-auto w-10 h-5 rounded-full relative transition-colors" style={{ background: theme === "dark" ? "var(--gradient-cta)" : "var(--surface-3)" }}>
+                  <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all" style={{ left: theme === "dark" ? "calc(100% - 18px)" : "2px" }} />
+                </div>
+              </button>
               <button className="btn-press w-full py-4 rounded-xl flex items-center gap-3 px-4 cursor-pointer" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }} onClick={() => { void Promise.resolve(logout()).then(() => onClose()); }}>
                 <LogOut size={20} style={{ color: "var(--text-muted)" }} />
                 <span className="text-sm font-semibold" style={{ color: "var(--fg)" }}>로그아웃</span>
@@ -4749,6 +4948,99 @@ function PendingUndoBar({
   );
 }
 
+// ─── 삭제 undo 바 ─────────────────────────────────────────────────────────────
+function PendingDeleteBar({ cardName, onUndo }: { cardName: string; onUndo: () => void }) {
+  return (
+    <div className="fixed bottom-24 left-0 right-0 z-[600] flex justify-center px-4 pointer-events-none">
+      <div className="flex items-center gap-3 px-4 py-3 rounded-2xl pointer-events-auto" style={{ background: "var(--surface-1)", border: "1px solid var(--border)", boxShadow: "0 8px 24px rgba(0,0,0,0.14)" }}>
+        <Trash2 size={16} style={{ color: "#EF4444" }} />
+        <span className="text-sm font-semibold" style={{ color: "var(--fg)" }}>
+          {cardName ? `"${cardName}" 삭제 중…` : "카드 삭제 중…"}
+        </span>
+        <button className="btn-press px-3 py-1 rounded-xl text-xs font-bold cursor-pointer border-none" style={{ background: "var(--gradient-cta)", color: "#fff" }} onClick={onUndo}>
+          취소
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── 주간 히트맵 ──────────────────────────────────────────────────────────────
+const DAY_LABELS_KR = ["월", "화", "수", "목", "금", "토", "일"];
+
+function WeeklyHeatmap({ regularCards }: { regularCards: RegularCard[] }) {
+  const today = new Date();
+  const todayStr = today.toISOString().split("T")[0];
+  const dow = today.getDay(); // 0=Sun
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((dow + 6) % 7));
+
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d.toISOString().split("T")[0];
+  });
+
+  return (
+    <div className="flex items-end gap-1.5">
+      {days.map((date, i) => {
+        const cards = regularCards.filter((c) => c.date === date);
+        const secs = cards.reduce((s, c) => s + (c.totalWorkSeconds || 0), 0);
+        const completed = cards.filter((c) => c.isCompleted).length;
+        const intensity = secs === 0 && completed === 0 ? 0 : secs < 1800 ? 1 : secs < 7200 ? 2 : 3;
+        const isToday = date === todayStr;
+        const isFuture = date > todayStr;
+        return (
+          <div key={date} className="flex flex-col items-center gap-1">
+            <div
+              className="rounded-md"
+              style={{
+                width: 26, height: 26,
+                background: isFuture ? "transparent"
+                  : intensity === 0 ? "var(--surface-3)"
+                  : intensity === 1 ? "rgba(var(--brand-rgb),0.28)"
+                  : intensity === 2 ? "rgba(var(--brand-rgb),0.58)"
+                  : "rgba(var(--brand-rgb),0.9)",
+                border: isToday ? "2px solid rgba(var(--brand-rgb),0.8)" : isFuture ? "1px dashed var(--border)" : "none",
+              }}
+            />
+            <span className="text-[9px] font-medium" style={{ color: isToday ? "var(--gold-dim)" : "var(--text-faint)" }}>
+              {DAY_LABELS_KR[i]}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── 오늘 완료 리캡 시트 ─────────────────────────────────────────────────────
+function DailyRecapSheet({ data, onClose }: { data: { count: number; totalSeconds: number }; onClose: () => void }) {
+  const h = Math.floor(data.totalSeconds / 3600);
+  const m = Math.floor((data.totalSeconds % 3600) / 60);
+  const timeStr = h > 0 ? `${h}시간 ${m}분` : `${m}분`;
+  return (
+    <div className="animate-fadeIn fixed inset-0 z-[800] flex items-end overlay-bg" onClick={onClose}>
+      <div className="animate-slideUp w-full rounded-t-3xl px-6 pt-6 pb-10" style={{ background: "var(--surface-1)", maxWidth: 500, margin: "0 auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex flex-col items-center text-center gap-3">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl" style={{ background: "linear-gradient(135deg,#22C55E,#16A34A)" }}>🎉</div>
+          <div>
+            <p className="text-lg font-bold mb-1" style={{ color: "var(--fg)" }}>오늘 할 일 완료!</p>
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              {data.count}개 완료
+              {data.totalSeconds >= 60 && ` · ${timeStr} 집중`}
+            </p>
+          </div>
+          <p className="text-xs leading-relaxed" style={{ color: "var(--text-faint)" }}>한 일은 사라지지 않아요. 보관함에서 확인해봐요.</p>
+          <button className="btn-press mt-2 w-full py-3 rounded-2xl font-bold text-sm cursor-pointer border-none" style={{ background: "var(--gradient-cta)", color: "#fff" }} onClick={onClose}>
+            확인
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const WELCOME_SHOWN_KEY = "todowallet_welcome_shown_v1";
 
 function AppShell() {
@@ -4769,6 +5061,16 @@ function AppShell() {
     const today = new Date().toISOString().split("T")[0];
     return regularCards.filter((c) => c.isCompleted && !!c.completedAt && c.completedAt.startsWith(today)).length;
   }, [regularCards, tick]);
+
+  const totalAttendanceDays = useMemo(() => {
+    const dates = new Set(
+      regularCards
+        .filter((c) => (c.totalWorkSeconds || 0) >= 60 || (c.sessions ?? []).some((s) => (s.duration || 0) >= 60))
+        .map((c) => c.date),
+    );
+    return dates.size;
+  }, [regularCards]);
+
   useEffect(() => {
     if (profileSetupAutoOpenUsed) return;
     if (!isDefaultProfile(profile)) return;
@@ -4790,21 +5092,29 @@ function AppShell() {
               {activeTab !== "home" && " · 보관함"}
             </p>
             {activeTab === "home" && (
-              <div
-                className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg"
-                style={todayCompletedCount > 0 ? {
-                  color: "var(--gold-dim)",
-                  background: "rgba(var(--brand-rgb),0.1)",
-                  border: "1px solid rgba(var(--brand-rgb),0.22)",
-                } : {
-                  color: "var(--text-faint)",
-                  background: "transparent",
-                  border: "1px solid var(--border)",
-                }}
-              >
-                <Check size={11} strokeWidth={2.5} />
-                {todayCompletedCount}개 완료
-              </div>
+              <>
+                <div
+                  className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg"
+                  style={todayCompletedCount > 0 ? {
+                    color: "var(--gold-dim)",
+                    background: "rgba(var(--brand-rgb),0.1)",
+                    border: "1px solid rgba(var(--brand-rgb),0.22)",
+                  } : {
+                    color: "var(--text-faint)",
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  <Check size={11} strokeWidth={2.5} />
+                  {todayCompletedCount}개 완료
+                </div>
+                {totalAttendanceDays > 0 && (
+                  <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg" style={{ color: "var(--text-faint)", border: "1px solid var(--border)" }}>
+                    <Zap size={10} strokeWidth={2.5} />
+                    총 {totalAttendanceDays}일
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
