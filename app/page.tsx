@@ -37,6 +37,17 @@ const getBreakRatioMessage = (breakRatio: number) => {
   return "충분히 재충전하며 진행하고 있어요";
 };
 
+const COMPLETION_PARTICLES = [
+  { tx: "62px", ty: "-54px", color: "#22C55E", delay: 0, size: 7 },
+  { tx: "-56px", ty: "-48px", color: "#4ADE80", delay: 25, size: 5 },
+  { tx: "54px", ty: "52px", color: "#86EFAC", delay: 55, size: 6 },
+  { tx: "-64px", ty: "44px", color: "#22C55E", delay: 15, size: 5 },
+  { tx: "76px", ty: "6px", color: "#4ADE80", delay: 45, size: 4 },
+  { tx: "-70px", ty: "-8px", color: "#BBF7D0", delay: 35, size: 6 },
+  { tx: "10px", ty: "-66px", color: "#22C55E", delay: 65, size: 5 },
+  { tx: "-14px", ty: "60px", color: "#4ADE80", delay: 8, size: 4 },
+];
+
 const formatSecondsShort = (secs: number) => {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -1672,6 +1683,92 @@ function ScheduledCardsManageSheet({
   );
 }
 
+// ─── 어제 성과 배너 ────────────────────────────────────────────────────────────
+
+function YesterdayBanner({ completedCount, workSecs, onClose }: { completedCount: number; workSecs: number; onClose: () => void }) {
+  const [progress, setProgress] = useState(100);
+  const DURATION = 7000;
+
+  useEffect(() => {
+    const start = Date.now();
+    const raf = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, 100 - (elapsed / DURATION) * 100);
+      setProgress(remaining);
+      if (remaining <= 0) { clearInterval(raf); onClose(); }
+    }, 50);
+    return () => clearInterval(raf);
+  }, [onClose]);
+
+  const h = Math.floor(workSecs / 3600);
+  const m = Math.floor((workSecs % 3600) / 60);
+  const timeStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+
+  const getMessage = () => {
+    if (completedCount >= 5) return "어제도 최고였어요 🔥";
+    if (completedCount >= 3) return "꾸준함이 실력이에요 💪";
+    if (completedCount >= 1) return "어제도 한 발 나아갔어요 ✨";
+    return `${timeStr} 집중했어요 ✨`;
+  };
+
+  return (
+    <div
+      className="animate-fadeInDown"
+      style={{
+        position: "relative",
+        margin: "0 20px 10px",
+        borderRadius: 16,
+        overflow: "hidden",
+        background: "linear-gradient(135deg, rgba(251,191,36,0.13) 0%, rgba(245,158,11,0.07) 100%)",
+        border: "1px solid rgba(251,191,36,0.35)",
+        boxShadow: "0 4px 16px rgba(245,158,11,0.1)",
+      }}
+    >
+      <div style={{ padding: "12px 14px 14px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(180,120,0,0.7)", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" }}>
+              어제의 성과
+            </p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              {completedCount > 0 && (
+                <span style={{ fontSize: 22, fontWeight: 800, color: "#92400e", lineHeight: 1, fontFamily: "var(--font-poppins), ui-sans-serif, system-ui" }}>
+                  {completedCount}개 완료
+                </span>
+              )}
+              {workSecs >= 60 && (
+                <span style={{ fontSize: completedCount > 0 ? 15 : 22, fontWeight: completedCount > 0 ? 600 : 800, color: completedCount > 0 ? "rgba(120,80,0,0.75)" : "#92400e", lineHeight: 1 }}>
+                  {completedCount > 0 ? "· " : ""}{timeStr} 집중
+                </span>
+              )}
+            </div>
+            <p style={{ fontSize: 12, color: "rgba(120,80,0,0.6)", marginTop: 4, fontWeight: 500 }}>
+              {getMessage()}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              flexShrink: 0, width: 24, height: 24,
+              borderRadius: "50%", border: "none",
+              background: "rgba(180,120,0,0.1)",
+              color: "rgba(120,80,0,0.5)",
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 14, fontWeight: 700, lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      {/* 자동 닫힘 프로그레스 바 */}
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 2, background: "rgba(251,191,36,0.15)" }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg, #F59E0B, #FCD34D)", transition: "width 0.05s linear", borderRadius: 1 }} />
+      </div>
+    </div>
+  );
+}
+
 function HomeScreen() {
   const { masterCards, regularCards, getLiveWorkSeconds, deleteRegularCard, reorderRegularCards, completeRegularCard, startWork, stopWork, startBreak, endBreak, getLiveBreakSeconds, updateRegularCard, tick } = useApp();
   const [homeMasterPage, setHomeMasterPage] = useState<"all" | string>("all");
@@ -1704,6 +1801,34 @@ function HomeScreen() {
   const checklistSwipeRef = useRef<{ cardId: string; x: number } | null>(null);
   const [goalBannerIndex, setGoalBannerIndex] = useState(0);
   const goalBannerSwipeRef = useRef<number | null>(null);
+  const [completingCardId, setCompletingCardId] = useState<string | null>(null);
+  const [yesterdayStats, setYesterdayStats] = useState<{ completedCount: number; workSecs: number } | null>(null);
+
+  useEffect(() => {
+    const today = new Date().toISOString().split("T")[0];
+    const storageKey = `yw-banner-shown-${today}`;
+    if (localStorage.getItem(storageKey)) return;
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+    const completedCount = regularCards.filter(
+      (c) => c.isCompleted && c.completedAt?.startsWith(yesterday),
+    ).length;
+    let workSecs = 0;
+    for (const card of regularCards) {
+      for (const s of card.sessions ?? []) {
+        if (s.startTime?.startsWith(yesterday)) workSecs += s.duration || 0;
+      }
+    }
+    if (completedCount > 0 || workSecs >= 60) {
+      setYesterdayStats({ completedCount, workSecs });
+      localStorage.setItem(storageKey, "1");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => { if (completionTimerRef.current) clearTimeout(completionTimerRef.current); };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1754,6 +1879,11 @@ function HomeScreen() {
     () => regularCards.filter((c) => !c.isCompleted && c.isScheduled),
     [regularCards],
   );
+  const todayCompletedCount = useMemo(() => {
+    void tick;
+    const today = new Date().toISOString().split("T")[0];
+    return regularCards.filter((c) => c.isCompleted && !!c.completedAt && c.completedAt.startsWith(today)).length;
+  }, [regularCards, tick]);
   const showCardMgmt = !focusedId && (visibleRegular.length > 0 || scheduledPending.length > 0);
 
   useEffect(() => {
@@ -1833,10 +1963,21 @@ function HomeScreen() {
     }
   };
   
+  const triggerCompletion = (cardId: string) => {
+    if (completingCardId) return;
+    setCompletingCardId(cardId);
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    completionTimerRef.current = setTimeout(() => {
+      completeRegularCard(cardId);
+      setCompletingCardId(null);
+      setFocusedId((prev) => (prev === cardId ? null : prev));
+      completionTimerRef.current = null;
+    }, 880);
+  };
+
   const handleComplete = () => {
     if (focusedCard) {
-      completeRegularCard(focusedCard.id);
-      setFocusedId(null);
+      triggerCompletion(focusedCard.id);
     }
   };
   
@@ -1916,7 +2057,7 @@ function HomeScreen() {
   const handleTouchEnd = () => {
     if (swipeCardId && Math.abs(swipeX) > swipeThreshold) {
       if (swipeX < -swipeThreshold) { deleteRegularCard(swipeCardId); }
-      else if (swipeX > swipeThreshold) { completeRegularCard(swipeCardId); }
+      else if (swipeX > swipeThreshold) { triggerCompletion(swipeCardId); }
     }
     swipeStartRef.current = null; setSwipeCardId(null); setSwipeX(0);
   };
@@ -1944,7 +2085,7 @@ function HomeScreen() {
       if (ref && Math.abs(finalX) > swipeThreshold) {
         setTimeout(() => {
           if (finalX < -swipeThreshold) deleteRegularCard(ref.id);
-          else if (finalX > swipeThreshold) completeRegularCard(ref.id);
+          else if (finalX > swipeThreshold) triggerCompletion(ref.id);
         }, 0);
       }
     };
@@ -1967,6 +2108,15 @@ function HomeScreen() {
   if (visibleRegular.length === 0) {
     return (
       <div className="relative w-full h-full overflow-auto">
+        {!focusedId && yesterdayStats && (
+          <div className="mt-3" style={{ maxWidth: 500, margin: "12px auto 0" }}>
+            <YesterdayBanner
+              completedCount={yesterdayStats.completedCount}
+              workSecs={yesterdayStats.workSecs}
+              onClose={() => setYesterdayStats(null)}
+            />
+          </div>
+        )}
         {!focusedId && activeGoalBanner && (
           <div className="px-5 mt-1 mb-3" style={{ maxWidth: 500, margin: "0 auto" }}>
             <div
@@ -2147,6 +2297,13 @@ function HomeScreen() {
           </div>
         </div>
       )}
+      {!focusedId && yesterdayStats && (
+        <YesterdayBanner
+          completedCount={yesterdayStats.completedCount}
+          workSecs={yesterdayStats.workSecs}
+          onClose={() => setYesterdayStats(null)}
+        />
+      )}
       {!focusedId && activeGoalBanner && (
         <div className="px-5 mb-2" style={{ maxWidth: 500, margin: "0 auto" }}>
           <div
@@ -2220,17 +2377,32 @@ function HomeScreen() {
           </div>
         </div>
       )}
-      {/* 카드 관리 */}
-      {showCardMgmt && (
-        <div className="flex justify-end px-5 mb-1" style={{ maxWidth: 500, margin: "0 auto" }}>
-          <button
-            type="button"
-            className="btn-press-sm flex items-center gap-1.5 text-xs font-semibold cursor-pointer bg-transparent border-none py-1.5 px-2 rounded-xl"
-            style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
-            onClick={() => setCardMgmtOpen(true)}
+      {/* 오늘 완료 카운트 + 카드 관리 */}
+      {!focusedId && (
+        <div className="flex items-center justify-between px-5 mb-1" style={{ maxWidth: 500, margin: "0 auto" }}>
+          <div
+            className="flex items-center gap-1.5 text-xs font-semibold py-1.5 px-2 rounded-xl"
+            style={{
+              color: "var(--gold-dim)",
+              background: "rgba(var(--brand-rgb),0.08)",
+              border: "1px solid rgba(var(--brand-rgb),0.24)",
+            }}
           >
-            <LayoutGrid size={14} /> 카드 관리
-          </button>
+            <Check size={14} />
+            오늘 {todayCompletedCount}개 완료
+          </div>
+          {showCardMgmt ? (
+            <button
+              type="button"
+              className="btn-press-sm flex items-center gap-1.5 text-xs font-semibold cursor-pointer bg-transparent border-none py-1.5 px-2 rounded-xl"
+              style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+              onClick={() => setCardMgmtOpen(true)}
+            >
+              <LayoutGrid size={14} /> 카드 관리
+            </button>
+          ) : (
+            <div style={{ width: 74 }} />
+          )}
         </div>
       )}
 
@@ -2248,7 +2420,7 @@ function HomeScreen() {
       />
 
       {/* Back and Edit buttons - ABOVE the card */}
-      {focusedId && focusedCard && !showCardBack && (
+      {focusedId && focusedCard && !showCardBack && !completingCardId && (
         <div className="absolute left-5 right-5 top-3 z-[400] flex items-center justify-between animate-fadeIn" style={{ maxWidth: 460, margin: "0 auto" }}>
           <button
             className="btn-press flex items-center gap-1.5 bg-transparent border-none cursor-pointer py-2 px-1 text-sm font-semibold"
@@ -2266,7 +2438,7 @@ function HomeScreen() {
           </button>
         </div>
       )}
-      {focusedId && focusedCard && hasFocusedMasterGoalWidget && (
+      {focusedId && focusedCard && hasFocusedMasterGoalWidget && !completingCardId && (
         <div className="absolute left-5 right-5 z-[395] animate-fadeIn" style={{ top: 46, maxWidth: 460, margin: "0 auto" }}>
           <div className="rounded-2xl px-3.5 py-2.5" style={{ background: "var(--surface-1)", border: "1px solid var(--border)", boxShadow: "0 4px 14px rgba(0,0,0,0.08)" }}>
             <div className="flex items-center justify-between gap-2 mb-1">
@@ -2336,25 +2508,27 @@ function HomeScreen() {
               zIndex = i;
             }
 
+            const isCompleting = completingCardId === card.id;
+
             return (
               <div
                 key={card.id}
-                className="absolute left-0 right-0 animate-fadeInUp"
+                className={`absolute left-0 right-0${isCompleting ? " card-fly-to-vault" : " animate-fadeInUp"}`}
                 style={{
                   top,
-                  zIndex,
-                  opacity,
+                  zIndex: isCompleting ? 999 : zIndex,
+                  opacity: isCompleting ? 1 : opacity,
                   transform: `scale(${scale})`,
-                  transition: isSwiping ? "none" : "top 0.4s cubic-bezier(0.32, 0.72, 0, 1), transform 0.3s ease, opacity 0.3s ease",
-                  animationDelay: `${i * 0.05}s`,
+                  transition: isCompleting ? "none" : (isSwiping ? "none" : "top 0.4s cubic-bezier(0.32, 0.72, 0, 1), transform 0.3s ease, opacity 0.3s ease"),
+                  animationDelay: isCompleting ? undefined : `${i * 0.05}s`,
                   animationFillMode: "both",
-                  pointerEvents,
+                  pointerEvents: isCompleting ? "none" : pointerEvents,
                   touchAction: focusedId ? "none" : "pan-y",
                   perspective: "1000px",
                 }}
                 onMouseEnter={() => !focusedId && !reorderMode && setHoveredIndex(i)}
                 onMouseLeave={() => !focusedId && setHoveredIndex(null)}
-                onClick={() => { if (didSwipeRef.current) { didSwipeRef.current = false; return; } if (!isSwiping) handleCardClick(card.id); }}
+                onClick={() => { if (didSwipeRef.current) { didSwipeRef.current = false; return; } if (!isSwiping && !isCompleting) handleCardClick(card.id); }}
                 onTouchStart={(e) => handleTouchStart(e, card.id)}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
@@ -2389,13 +2563,32 @@ function HomeScreen() {
                   }}
                 >
                   {/* Card Front */}
-                  <div style={{ backfaceVisibility: "hidden" }}>
+                  <div style={{ backfaceVisibility: "hidden", position: "relative" }}>
                     <CardStackItem 
                       card={card} 
                       masterName={masterName} 
                       liveSeconds={getLiveWorkSeconds(card)} 
                       isFocused={isFocused} 
                     />
+                    {isCompleting && (
+                      <div className="completion-overlay">
+                        <div className="completion-flash" />
+                        <div className="completion-check">
+                          <svg width="64" height="64" viewBox="0 0 64 64">
+                            <circle cx="32" cy="32" r="28" fill="rgba(34,197,94,0.12)" />
+                            <circle cx="32" cy="32" r="28" fill="none" stroke="#22C55E" strokeWidth="2.5" strokeLinecap="round" className="completion-ring" />
+                            <path d="M21 33 L28 40 L43 24" fill="none" stroke="#22C55E" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </div>
+                        {COMPLETION_PARTICLES.map((p, idx) => (
+                          <div
+                            key={idx}
+                            className="completion-particle"
+                            style={{ "--tx": p.tx, "--ty": p.ty, background: p.color, animationDelay: `${p.delay}ms`, width: p.size, height: p.size } as React.CSSProperties}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   
                   {/* Card Back */}
@@ -2535,7 +2728,7 @@ function HomeScreen() {
       </div>
 
       {/* Focused Card Actions - Between card and queued cards */}
-      {focusedId && focusedCard && (
+      {focusedId && focusedCard && !completingCardId && (
         <>
           {/* Invisible backdrop - clicking empty area between buttons returns home */}
           <div 
@@ -3036,6 +3229,211 @@ function GalleryView({ masterId, onClose }: { masterId: string; onClose: () => v
 }
 
 // ═══════════════════════════════════════════
+// GOLD CELEBRATION OVERLAY
+// ═══════════════════════════════════════════
+
+type GoldCelebData = {
+  masterName: string;
+  totalWorkSeconds: number;
+  attendanceDays: number;
+  completedCount: number;
+  totalCards: number;
+  projectDays: number;
+  goalContent?: string;
+  goalDeadline?: string;
+};
+
+function GoldStatCell({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div style={{ background: "rgba(255,215,0,0.05)", borderRadius: 14, padding: "14px 12px", border: "1px solid rgba(255,215,0,0.14)", textAlign: "center" }}>
+      <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,215,0,0.5)", letterSpacing: "0.1em", marginBottom: 6, textTransform: "uppercase" }}>{label}</p>
+      <p style={{ fontSize: 24, fontWeight: 800, color: "#FFD700", fontFamily: "var(--font-poppins), ui-sans-serif, system-ui", lineHeight: 1, textShadow: "0 0 20px rgba(255,215,0,0.5)" }}>{value}</p>
+      <p style={{ fontSize: 10, color: "rgba(255,215,0,0.35)", marginTop: 5 }}>{sub}</p>
+    </div>
+  );
+}
+
+function GoldCelebrationOverlay({ data, onClose }: { data: GoldCelebData; onClose: () => void }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), 30);
+    return () => clearTimeout(t);
+  }, []);
+
+  const formatWorkTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h === 0 && m === 0) return "0분";
+    if (h === 0) return `${m}분`;
+    if (m === 0) return `${h}시간`;
+    return `${h}h ${m}m`;
+  };
+
+  const handleClose = () => {
+    setVisible(false);
+    setTimeout(onClose, 350);
+  };
+
+  const particles: { left: string; delay: string; dur: string; size: number; color: string }[] = [
+    { left: "8%",  delay: "0s",    dur: "3.2s", size: 6, color: "#FFD700" },
+    { left: "18%", delay: "0.6s",  dur: "2.8s", size: 4, color: "#FFF4B8" },
+    { left: "28%", delay: "1.1s",  dur: "3.5s", size: 7, color: "#D4AF37" },
+    { left: "40%", delay: "0.3s",  dur: "2.6s", size: 5, color: "#FFD700" },
+    { left: "52%", delay: "0.9s",  dur: "3.1s", size: 4, color: "#FFF4B8" },
+    { left: "63%", delay: "0.2s",  dur: "2.9s", size: 8, color: "#C5A028" },
+    { left: "74%", delay: "1.4s",  dur: "3.3s", size: 5, color: "#FFD700" },
+    { left: "84%", delay: "0.7s",  dur: "2.7s", size: 6, color: "#FFF4B8" },
+    { left: "93%", delay: "0.4s",  dur: "3.0s", size: 4, color: "#D4AF37" },
+    { left: "33%", delay: "1.7s",  dur: "2.5s", size: 5, color: "#FFD700" },
+    { left: "57%", delay: "1.2s",  dur: "3.4s", size: 3, color: "#FFF4B8" },
+    { left: "78%", delay: "0.1s",  dur: "2.8s", size: 6, color: "#C5A028" },
+  ];
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 9999,
+        background: "linear-gradient(180deg, #0d0900 0%, #1c1200 35%, #110e00 70%, #000 100%)",
+        opacity: visible ? 1 : 0,
+        transition: "opacity 0.35s ease",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "0 20px",
+      }}
+    >
+      {/* 상단 골드 리본 */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: GOLD_METAL_RIBBON, boxShadow: "0 0 24px rgba(255,215,0,0.65)" }} />
+
+      {/* 파티클 */}
+      {particles.map((p, i) => (
+        <div key={i} style={{
+          position: "absolute", bottom: "-12px", left: p.left,
+          width: p.size, height: p.size, borderRadius: "50%",
+          background: p.color,
+          boxShadow: `0 0 ${p.size * 2}px ${p.color}80`,
+          animation: `gold-float ${p.dur} ${p.delay} infinite ease-in`,
+          pointerEvents: "none",
+        }} />
+      ))}
+
+      {/* 배경 링 효과 */}
+      <div style={{
+        position: "absolute", top: "50%", left: "50%",
+        transform: "translate(-50%, -50%)",
+        width: 320, height: 320, borderRadius: "50%",
+        border: "1px solid rgba(255,215,0,0.08)",
+        pointerEvents: "none",
+        animation: "gold-ring 3s 0.5s infinite ease-out",
+      }} />
+      <div style={{
+        position: "absolute", top: "50%", left: "50%",
+        transform: "translate(-50%, -50%)",
+        width: 200, height: 200, borderRadius: "50%",
+        border: "1px solid rgba(255,215,0,0.12)",
+        pointerEvents: "none",
+        animation: "gold-ring 3s 1.2s infinite ease-out",
+      }} />
+
+      {/* 메인 콘텐츠 */}
+      <div style={{
+        width: "100%", maxWidth: 430, textAlign: "center",
+        animation: visible ? "gold-scale-in 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none",
+      }}>
+        {/* 크라운 아이콘 */}
+        <div style={{
+          fontSize: 48, marginBottom: 12, display: "inline-block",
+          animation: "gold-crown-bounce 2.5s infinite ease-in-out",
+          filter: "drop-shadow(0 0 12px rgba(255,215,0,0.7))",
+        }}>
+          👑
+        </div>
+
+        {/* GOLD 뱃지 */}
+        <div style={{ marginBottom: 20 }}>
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            padding: "5px 22px",
+            borderRadius: 99,
+            background: GOLD_METAL_RIBBON,
+            backgroundSize: "200% auto",
+            animation: "gold-pulse 2s infinite ease-in-out, gold-shimmer 3s linear infinite",
+            boxShadow: "0 0 30px rgba(255,215,0,0.5), 0 4px 16px rgba(0,0,0,0.6)",
+            fontSize: 11, fontWeight: 900, letterSpacing: "0.3em", color: "#2D1A00",
+          }}>
+            ✦ GOLD ✦
+          </span>
+        </div>
+
+        {/* 카드 이름 */}
+        <h2 style={{
+          fontSize: 30, fontWeight: 800,
+          background: "linear-gradient(180deg, #FFD700 0%, #D4AF37 60%, #B8860B 100%)",
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          textShadow: "none",
+          marginBottom: 8, lineHeight: 1.2,
+          fontFamily: "var(--font-poppins), ui-sans-serif, system-ui",
+          wordBreak: "break-word",
+        }}>
+          {data.masterName}
+        </h2>
+        <p style={{ fontSize: 15, color: "rgba(255,220,120,0.8)", marginBottom: 28, fontWeight: 500 }}>
+          골드 승급을 축하합니다!
+        </p>
+
+        {/* 구분선 */}
+        <div style={{ height: 1, background: "linear-gradient(90deg, transparent, rgba(255,215,0,0.35), transparent)", marginBottom: 20 }} />
+
+        {/* 스탯 그리드 */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+          <GoldStatCell label="총 투자 시간" value={formatWorkTime(data.totalWorkSeconds)} sub={data.totalWorkSeconds < 3600 ? "꾸준히 달렸어요" : `${(data.totalWorkSeconds / 3600).toFixed(1)}시간`} />
+          <GoldStatCell label="활동 일수" value={`${data.attendanceDays}일`} sub="1분 이상 출근한 날" />
+          <GoldStatCell label="완료한 카드" value={`${data.completedCount}개`} sub={`전체 ${data.totalCards}개 중`} />
+          <GoldStatCell label="프로젝트 기간" value={`${data.projectDays}일`} sub="생성일로부터" />
+        </div>
+
+        {/* 목표 */}
+        {data.goalContent && (
+          <div style={{
+            background: "rgba(255,215,0,0.07)", borderRadius: 14,
+            padding: "12px 16px", border: "1px solid rgba(255,215,0,0.18)",
+            marginBottom: 12, textAlign: "left",
+          }}>
+            <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,215,0,0.55)", letterSpacing: "0.1em", marginBottom: 5 }}>✓ 달성한 목표</p>
+            <p style={{ fontSize: 14, color: "rgba(255,225,140,0.9)", fontWeight: 500, lineHeight: 1.55 }}>{data.goalContent}</p>
+            {data.goalDeadline && (
+              <p style={{ fontSize: 11, color: "rgba(255,215,0,0.35)", marginTop: 5 }}>기한 {data.goalDeadline}</p>
+            )}
+          </div>
+        )}
+
+        {/* 확인 버튼 */}
+        <button
+          onClick={handleClose}
+          style={{
+            width: "100%", padding: "15px",
+            borderRadius: 16, border: "none",
+            background: GOLD_METAL_RIBBON,
+            color: "#2D1A00", fontWeight: 900, fontSize: 15,
+            cursor: "pointer", letterSpacing: "0.06em",
+            boxShadow: "0 4px 24px rgba(255,215,0,0.4), 0 1px 0 rgba(255,255,255,0.3) inset",
+            marginTop: 4,
+          }}
+        >
+          확인
+        </button>
+      </div>
+
+      {/* 하단 골드 리본 */}
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 5, background: GOLD_METAL_RIBBON, boxShadow: "0 0 24px rgba(255,215,0,0.65)" }} />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
 // VAULT SCREEN
 // ═══════════════════════════════════════════
 
@@ -3045,6 +3443,7 @@ function VaultScreen() {
   const [filter, setFilter] = useState<"active" | "gold" | "silver">("active");
   const [focusedMasterId, setFocusedMasterId] = useState<string | null>(null);
   const [galleryMasterId, setGalleryMasterId] = useState<string | null>(null);
+  const [goldCelebData, setGoldCelebData] = useState<GoldCelebData | null>(null);
   const [editMasterId, setEditMasterId] = useState<string | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -3304,9 +3703,26 @@ function VaultScreen() {
                         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45)",
                       }}
                       onClick={() => {
+                        const children = regularCards.filter((r) => r.masterId === selected.id);
+                        const totalWorkSeconds = children.reduce((sum, c) => sum + (c.totalWorkSeconds || 0), 0);
+                        const attendanceDays = new Set(
+                          children
+                            .filter((c) => (c.totalWorkSeconds || 0) >= 60 || (c.sessions ?? []).some((s) => (s.duration || 0) >= 60))
+                            .map((c) => c.date),
+                        ).size;
+                        const completedCount = children.filter((c) => c.isCompleted).length;
+                        const projectDays = Math.max(1, Math.ceil((Date.now() - new Date(selected.createdAt).getTime()) / 86400000));
                         setMasterStatus(selected.id, "gold");
-                        setFilter("gold");
-                        setTimeout(() => setFocusedMasterId(null), 800);
+                        setGoldCelebData({
+                          masterName: selected.name,
+                          totalWorkSeconds,
+                          attendanceDays,
+                          completedCount,
+                          totalCards: children.length,
+                          projectDays,
+                          goalContent: selected.goalContent,
+                          goalDeadline: selected.goalDeadline,
+                        });
                       }}
                     >
                       골드카드 전환
@@ -3387,9 +3803,26 @@ function VaultScreen() {
                         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45)",
                       }}
                       onClick={() => {
+                        const children = regularCards.filter((r) => r.masterId === selected.id);
+                        const totalWorkSeconds = children.reduce((sum, c) => sum + (c.totalWorkSeconds || 0), 0);
+                        const attendanceDays = new Set(
+                          children
+                            .filter((c) => (c.totalWorkSeconds || 0) >= 60 || (c.sessions ?? []).some((s) => (s.duration || 0) >= 60))
+                            .map((c) => c.date),
+                        ).size;
+                        const completedCount = children.filter((c) => c.isCompleted).length;
+                        const projectDays = Math.max(1, Math.ceil((Date.now() - new Date(selected.createdAt).getTime()) / 86400000));
                         setMasterStatus(selected.id, "gold");
-                        setFilter("gold");
-                        setTimeout(() => setFocusedMasterId(null), 800);
+                        setGoldCelebData({
+                          masterName: selected.name,
+                          totalWorkSeconds,
+                          attendanceDays,
+                          completedCount,
+                          totalCards: children.length,
+                          projectDays,
+                          goalContent: selected.goalContent,
+                          goalDeadline: selected.goalDeadline,
+                        });
                       }}
                     >
                       골드카드 전환
@@ -3469,6 +3902,17 @@ function VaultScreen() {
       )}
 
       {galleryMasterId && <GalleryView masterId={galleryMasterId} onClose={() => setGalleryMasterId(null)} />}
+
+      {goldCelebData && (
+        <GoldCelebrationOverlay
+          data={goldCelebData}
+          onClose={() => {
+            setGoldCelebData(null);
+            setFilter("gold");
+            setFocusedMasterId(null);
+          }}
+        />
+      )}
 
       {editMasterId && (() => {
         const em = masterCards.find((m) => m.id === editMasterId);
@@ -4101,21 +4545,41 @@ function AppShell() {
   const { activeTab, setActiveTab, profile, regularCards, isAdmin, tick, pendingUndo, undoPendingRegularCompletion } = useApp();
   const [createOpen, setCreateOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const todayIsoDate = new Date().toISOString().split("T")[0];
 
   const todayActiveCount = useMemo(() => {
     void tick;
     return regularCards.filter((c) => regularVisibleToday(c, new Date())).length;
   }, [regularCards, tick]);
+  const todayCompletedCount = useMemo(() => {
+    void tick;
+    return regularCards.filter((c) => c.isCompleted && !!c.completedAt && c.completedAt.startsWith(todayIsoDate)).length;
+  }, [regularCards, tick, todayIsoDate]);
 
   return (
     <div className="flex flex-col h-screen max-h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
       <header className="shrink-0 flex items-center justify-between px-5 pt-12 pb-3 z-20">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight truncate" style={{ color: "var(--fg)", fontFamily: "var(--font-poppins), ui-sans-serif, system-ui, sans-serif" }}>TodoWallet</h1>
-          <p className="text-xs mt-0.5 font-medium" style={{ color: "var(--text-muted)" }}>
-            {new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" })}
-            {activeTab === "home" ? ` · 오늘 ${todayActiveCount}개의 카드` : " · 보관함"}
-          </p>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+              {new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" })}
+              {activeTab !== "home" && " · 보관함"}
+            </p>
+            {activeTab === "home" && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold"
+                style={{
+                  background: todayCompletedCount > 0 ? "rgba(34,197,94,0.15)" : "rgba(0,0,0,0.06)",
+                  color: todayCompletedCount > 0 ? "#16a34a" : "var(--text-muted)",
+                  border: todayCompletedCount > 0 ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(0,0,0,0.08)",
+                }}
+              >
+                <Check size={10} strokeWidth={3} />
+                오늘 {todayCompletedCount}개 완료
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {isAdmin ? (
