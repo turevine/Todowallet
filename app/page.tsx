@@ -289,6 +289,15 @@ const SUPABASE_STATE_TABLE = "user_wallet_data";
 const AUTO_LOGIN_PREF_KEY = "todowallet.autoLogin";
 
 const DEFAULT_PROFILE: Profile = { name: "나", job: "직업 입력", age: "나이 입력", vision: "비전 입력", avatarColor: "#2563EB" };
+const isVisionUnset = (vision?: string) => {
+  const value = (vision ?? "").trim();
+  return !value || value === DEFAULT_PROFILE.vision;
+};
+const isDefaultProfile = (profile: Profile) =>
+  (profile.name ?? "").trim() === DEFAULT_PROFILE.name &&
+  (profile.job ?? "").trim() === DEFAULT_PROFILE.job &&
+  (profile.age ?? "").trim() === DEFAULT_PROFILE.age &&
+  isVisionUnset(profile.vision);
 
 type SyncedAppState = Pick<AppState, "profile" | "masterCards" | "presetCards" | "regularCards" | "recipeCards" | "redeemedCouponIds"> & {
   checklistByCard: Record<string, ChecklistItem[]>;
@@ -1769,7 +1778,7 @@ function YesterdayBanner({ completedCount, workSecs, onClose }: { completedCount
   );
 }
 
-function HomeScreen() {
+function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   const { masterCards, regularCards, getLiveWorkSeconds, deleteRegularCard, reorderRegularCards, completeRegularCard, startWork, stopWork, startBreak, endBreak, getLiveBreakSeconds, updateRegularCard, tick } = useApp();
   const [homeMasterPage, setHomeMasterPage] = useState<"all" | string>("all");
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -2190,14 +2199,59 @@ function HomeScreen() {
             </div>
           </div>
         )}
-        <div className="animate-fadeInUp flex flex-col items-center justify-center h-full gap-6 p-16">
-          <div className="w-20 h-20 rounded-3xl flex items-center justify-center" style={{ background: "rgba(var(--brand-rgb),0.08)", border: "1px solid rgba(var(--brand-rgb),0.2)" }}>
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="6" y="12" width="28" height="18" rx="3" stroke="var(--gold)" strokeWidth="1.5" /><rect x="6" y="17" width="28" height="2" fill="var(--gold)" opacity="0.4" /><line x1="20" y1="8" x2="20" y2="12" stroke="var(--gold)" strokeWidth="1.5" /><line x1="16" y1="8" x2="24" y2="8" stroke="var(--gold)" strokeWidth="1.5" /></svg>
-          </div>
-          <div className="text-center">
-            <h3 className="text-lg font-bold mb-2" style={{ color: "var(--fg)" }}>오늘의 카드가 없어요</h3>
-            <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>아래 + 버튼을 눌러<br />새로운 카드를 발급받으세요</p>
-          </div>
+        <div className="animate-fadeInUp flex flex-col items-center justify-center h-full gap-5 px-6 py-12">
+          {masterCards.length === 0 ? (
+            <>
+              <div className="w-full max-w-sm">
+                <button
+                  type="button"
+                  className="btn-press w-full text-left rounded-3xl p-6 cursor-pointer"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(var(--brand-rgb),0.18) 0%, rgba(var(--brand-rgb),0.06) 100%)",
+                    border: "1.5px solid rgba(var(--brand-rgb),0.4)",
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.10)",
+                  }}
+                  onClick={() => onCreateMaster?.()}
+                >
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "var(--gradient-cta)", boxShadow: "var(--shadow-cta-sm)" }}>
+                      <Crown size={20} color="#FFFFFF" />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold tracking-widest uppercase" style={{ color: "var(--gold-dim)" }}>시작하기</p>
+                      <p className="text-base font-bold leading-tight" style={{ color: "var(--fg)" }}>장기 목표를 설정해볼까요?</p>
+                    </div>
+                  </div>
+                  <p className="text-[13px] leading-relaxed mb-4" style={{ color: "var(--text-muted)" }}>
+                    마스터카드는 <strong style={{ color: "var(--fg)" }}>장기 목표(예: 영어 실력 올리기)</strong>예요.<br />
+                    그 아래에 오늘 할 일을 하나씩 쌓아가요.
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold" style={{ color: "var(--gold-dim)" }}>탭해서 첫 목표 만들기</span>
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "var(--gradient-cta)" }}>
+                      <ChevronRight size={16} color="#FFFFFF" />
+                    </div>
+                  </div>
+                </button>
+              </div>
+              <div className="flex items-center gap-4 w-full max-w-sm">
+                <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+                <span className="text-xs" style={{ color: "var(--text-faint)" }}>또는</span>
+                <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+              </div>
+              <p className="text-xs text-center" style={{ color: "var(--text-faint)" }}>아래 <strong style={{ color: "var(--text-muted)" }}>+ 버튼</strong>으로 바로 만들 수도 있어요</p>
+            </>
+          ) : (
+            <>
+              <div className="w-20 h-20 rounded-3xl flex items-center justify-center" style={{ background: "rgba(var(--brand-rgb),0.08)", border: "1px solid rgba(var(--brand-rgb),0.2)" }}>
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="6" y="12" width="28" height="18" rx="3" stroke="var(--gold)" strokeWidth="1.5" /><rect x="6" y="17" width="28" height="2" fill="var(--gold)" opacity="0.4" /><line x1="20" y1="8" x2="20" y2="12" stroke="var(--gold)" strokeWidth="1.5" /><line x1="16" y1="8" x2="24" y2="8" stroke="var(--gold)" strokeWidth="1.5" /></svg>
+              </div>
+              <div className="text-center">
+                <h3 className="text-lg font-bold mb-2" style={{ color: "var(--fg)" }}>오늘의 카드가 없어요</h3>
+                <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>아래 + 버튼을 눌러<br />새로운 카드를 발급받으세요</p>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -2377,32 +2431,17 @@ function HomeScreen() {
           </div>
         </div>
       )}
-      {/* 오늘 완료 카운트 + 카드 관리 */}
-      {!focusedId && (
-        <div className="flex items-center justify-between px-5 mb-1" style={{ maxWidth: 500, margin: "0 auto" }}>
-          <div
-            className="flex items-center gap-1.5 text-xs font-semibold py-1.5 px-2 rounded-xl"
-            style={{
-              color: "var(--gold-dim)",
-              background: "rgba(var(--brand-rgb),0.08)",
-              border: "1px solid rgba(var(--brand-rgb),0.24)",
-            }}
+      {/* 카드 관리 */}
+      {!focusedId && showCardMgmt && (
+        <div className="flex items-center justify-end px-5 mb-1" style={{ maxWidth: 500, margin: "0 auto" }}>
+          <button
+            type="button"
+            className="btn-press-sm flex items-center gap-1.5 text-xs font-semibold cursor-pointer bg-transparent border-none py-1.5 px-2 rounded-xl"
+            style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+            onClick={() => setCardMgmtOpen(true)}
           >
-            <Check size={14} />
-            오늘 {todayCompletedCount}개 완료
-          </div>
-          {showCardMgmt ? (
-            <button
-              type="button"
-              className="btn-press-sm flex items-center gap-1.5 text-xs font-semibold cursor-pointer bg-transparent border-none py-1.5 px-2 rounded-xl"
-              style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
-              onClick={() => setCardMgmtOpen(true)}
-            >
-              <LayoutGrid size={14} /> 카드 관리
-            </button>
-          ) : (
-            <div style={{ width: 74 }} />
-          )}
+            <LayoutGrid size={14} /> 카드 관리
+          </button>
         </div>
       )}
 
@@ -3955,9 +3994,18 @@ function PresetSelector({ selected, onSelect }: { selected: string; onSelect: (i
 // CREATE CARD SHEET
 // ═══════════════════════════════════════════
 
-function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CreateCardSheet({
+  open,
+  onClose,
+  initialType,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialType?: "master" | "regular" | "recipe";
+}) {
   const { addMasterCard, addRegularCard, addRecipeCard, addPresetCard, masterCards, presetCards } = useApp();
-  const [step, setStep] = useState<"type" | "form">("type");
+  const [step, setStep] = useState<"type" | "form" | "master-success">("type");
+  const [createdMasterId, setCreatedMasterId] = useState<string>("");
   const [selectedType, setSelectedType] = useState<"master" | "preset" | "regular" | "recipe">("regular");
   const [cardName, setCardName] = useState("");
   const [designId, setDesignId] = useState(CARD_PRESETS[0].id);
@@ -3981,6 +4029,7 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
 
   const reset = () => {
     setStep("type");
+    setCreatedMasterId("");
     setCardName("");
     setDesignId(CARD_PRESETS[0].id);
     setHasGoal(true);
@@ -4010,10 +4059,24 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
     }
   };
 
+  useEffect(() => {
+    if (!open || !initialType) return;
+    handleTypeSelect(initialType);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialType]);
+
   const handleCreate = () => {
     if (!cardName.trim()) return;
     if (selectedType === "master") {
-      addMasterCard({ type: "master", name: cardName, designPresetId: designId, hasGoal, goalContent: hasGoal ? goalContent : undefined, goalDeadline: hasGoal ? goalDeadline : undefined });
+      const newMaster = addMasterCard({ type: "master", name: cardName, designPresetId: designId, hasGoal, goalContent: hasGoal ? goalContent : undefined, goalDeadline: hasGoal ? goalDeadline : undefined });
+      setCreatedMasterId(newMaster.id);
+      setCardName("");
+      setDesignId(CARD_PRESETS[0].id);
+      setHasGoal(true);
+      setGoalContent("");
+      setGoalDeadline("");
+      setStep("master-success");
+      return;
     } else if (selectedType === "preset") {
       if (!masterId) return;
       addPresetCard({ type: "preset", masterId, name: cardName, designPresetId: designId });
@@ -4060,9 +4123,39 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
   if (!open) return null;
 
   const TYPES = [
-    { id: "master" as const, icon: Crown, title: "마스터카드", desc: "장기 목표와 일반 카드를 모아주는 최상위 카드", badge: "목표 설정 가능", color: MASTER_BRAND_RED, bg: "rgba(244,63,94,0.08)", border: "rgba(244,63,94,0.28)" },
-    { id: "regular" as const, icon: CreditCard, title: "일반카드", desc: "마스터카드 안에서 오늘의 할 일을 관리해요.", badge: "예약 발급 가능", color: "#3B82F6", bg: "rgba(59,130,246,0.06)", border: "rgba(59,130,246,0.2)" },
-    { id: "recipe" as const, icon: BookOpen, title: "레시피카드", desc: "특정 마스터카드에 소속된 참고자료나 아이디어 모음.", badge: "컬렉션", color: "#10B981", bg: "rgba(16,185,129,0.06)", border: "rgba(16,185,129,0.2)" },
+    {
+      id: "master" as const,
+      icon: Crown,
+      title: "마스터카드",
+      desc: "장기 목표를 담는 카드예요. 일반카드들이 여기에 모여요.",
+      hint: "📌 예: '영어 실력 올리기', '6개월 안에 독립하기'",
+      badge: "장기 목표",
+      color: MASTER_BRAND_RED,
+      bg: "rgba(244,63,94,0.08)",
+      border: "rgba(244,63,94,0.28)",
+    },
+    {
+      id: "regular" as const,
+      icon: CreditCard,
+      title: "일반카드",
+      desc: "오늘 할 일 하나를 담는 카드예요. 마스터카드 아래에 속해요.",
+      hint: "✅ 예: '오늘 30분 회화 연습', '런닝 5km'",
+      badge: "오늘의 할 일",
+      color: "#3B82F6",
+      bg: "rgba(59,130,246,0.06)",
+      border: "rgba(59,130,246,0.2)",
+    },
+    {
+      id: "recipe" as const,
+      icon: BookOpen,
+      title: "레시피카드",
+      desc: "자주 쓰는 체크리스트나 참고자료를 저장해둬요.",
+      hint: "📋 예: '주간 회고 체크리스트', '운동 루틴 정리'",
+      badge: "템플릿",
+      color: "#10B981",
+      bg: "rgba(16,185,129,0.06)",
+      border: "rgba(16,185,129,0.2)",
+    },
   ];
 
   return (
@@ -4078,7 +4171,7 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
                 <ChevronRight size={16} color="var(--fg)" style={{ transform: "rotate(180deg)" }} />
               </button>
             )}
-            <h2 className="text-lg font-bold" style={{ color: "var(--fg)" }}>{step === "type" ? "카드 만들기" : `${selectedType === "master" ? "마스터카드" : selectedType === "regular" ? "일반카드" : "레시피카드"} 생성`}</h2>
+            <h2 className="text-lg font-bold" style={{ color: "var(--fg)" }}>{step === "type" ? "카드 만들기" : step === "master-success" ? "목표 설정 완료!" : `${selectedType === "master" ? "마스터카드" : selectedType === "regular" ? "일반카드" : "레시피카드"} 생성`}</h2>
           </div>
           <button className="btn-press-sm w-8 h-8 rounded-full flex items-center justify-center cursor-pointer" style={{ background: "var(--surface-2)", border: "none" }} onClick={handleClose}>
             <X size={16} color="var(--fg)" />
@@ -4086,7 +4179,38 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
         </div>
 
         <div className="overflow-y-auto max-h-[calc(92vh-80px)] px-6 pb-8">
-          {step === "type" ? (
+          {step === "master-success" ? (
+            <div className="flex flex-col items-center text-center gap-5 py-4">
+              <div className="w-16 h-16 rounded-3xl flex items-center justify-center" style={{ background: "var(--gradient-cta)", boxShadow: "var(--shadow-cta-sm)" }}>
+                <Crown size={28} color="#FFFFFF" />
+              </div>
+              <div>
+                <p className="text-base font-bold mb-1" style={{ color: "var(--fg)" }}>마스터카드가 만들어졌어요!</p>
+                <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>이제 오늘 해야 할 일을<br />카드로 추가해볼까요?</p>
+              </div>
+              <div className="w-full flex flex-col gap-3 mt-2">
+                <button
+                  className="btn-press w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-bold text-[15px] cursor-pointer border-none"
+                  style={{ background: "var(--gradient-cta)", color: "#FFFFFF", boxShadow: "var(--shadow-cta-sm)" }}
+                  onClick={() => {
+                    setSelectedType("regular");
+                    setMasterId(createdMasterId);
+                    setStep("form");
+                  }}
+                >
+                  <CreditCard size={18} color="#FFFFFF" />
+                  첫 번째 할 일 만들기
+                </button>
+                <button
+                  className="btn-press w-full py-3 rounded-2xl font-semibold text-sm cursor-pointer"
+                  style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
+                  onClick={handleClose}
+                >
+                  나중에 할게요
+                </button>
+              </div>
+            </div>
+          ) : step === "type" ? (
             <div className="flex flex-col gap-3">
               {TYPES.map((type) => {
                 const Icon = type.icon;
@@ -4101,6 +4225,7 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
                         <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: "var(--surface-1)", color: type.color, border: `1px solid ${type.border}` }}>{type.badge}</span>
                       </div>
                       <p className="text-[13px] leading-relaxed" style={{ color: "var(--text-muted)" }}>{type.desc}</p>
+                      <p className="text-[11px] mt-1" style={{ color: "var(--text-faint)" }}>{type.hint}</p>
                     </div>
                     <ChevronRight size={18} color="var(--text-faint)" className="shrink-0 mt-1" />
                   </button>
@@ -4362,10 +4487,78 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
 // PROFILE MODAL
 // ═══════════════════════════════════════════
 
-function ProfileModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function DeleteAccountButton({ logout, onClose }: { logout: () => void | Promise<void>; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [errMsg, setErrMsg] = useState("");
+
+  const handleDelete = async () => {
+    if (!confirm("정말 탈퇴하시겠습니까?\n모든 데이터가 영구 삭제되며 복구할 수 없습니다.")) return;
+    setBusy(true);
+    setErrMsg("");
+    try {
+      const sb = isSupabaseConfigured() ? getSupabase() : null;
+      const token = sb ? (await sb.auth.getSession()).data.session?.access_token : null;
+      if (token) {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 12000);
+        let json: { ok: boolean; error?: string };
+        try {
+          const res = await fetch("/api/auth/delete-account", {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+          clearTimeout(t);
+          const text = await res.text();
+          try {
+            json = JSON.parse(text) as { ok: boolean; error?: string };
+          } catch {
+            setErrMsg(`서버 응답 오류 (${res.status})`);
+            setBusy(false);
+            return;
+          }
+        } catch {
+          clearTimeout(t);
+          setErrMsg("서버 연결 오류가 발생했습니다.");
+          setBusy(false);
+          return;
+        }
+        if (!json.ok) {
+          setErrMsg(json.error ?? "탈퇴 처리 중 오류가 발생했습니다.");
+          setBusy(false);
+          return;
+        }
+      }
+    } catch {
+      setErrMsg("오류가 발생했습니다. 다시 시도해주세요.");
+      setBusy(false);
+      return;
+    }
+    // signOut 없이 바로 로컬 초기화 후 새로고침 (auth 유저가 이미 삭제된 상태라 signOut은 걸림)
+    localStorage.clear();
+    window.location.reload();
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        className="btn-press w-full py-4 rounded-xl flex items-center gap-3 px-4 cursor-pointer disabled:opacity-50"
+        style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}
+        onClick={handleDelete}
+        disabled={busy}
+      >
+        {busy ? <Loader2 size={20} className="animate-spin" style={{ color: "#EF4444" }} /> : <UserX size={20} style={{ color: "#EF4444" }} />}
+        <span className="text-sm font-semibold" style={{ color: "#EF4444" }}>{busy ? "탈퇴 처리 중…" : "회원탈퇴"}</span>
+      </button>
+      {errMsg ? <p className="text-xs px-1" style={{ color: "#EF4444" }}>{errMsg}</p> : null}
+    </div>
+  );
+}
+
+function ProfileModal({ open, onClose, startEditing = false, isWelcome = false }: { open: boolean; onClose: () => void; startEditing?: boolean; isWelcome?: boolean }) {
   const { profile, updateProfile, logout } = useApp();
   if (!open) return null;
-  return <ProfileModalContent profile={profile} updateProfile={updateProfile} logout={logout} onClose={onClose} />;
+  return <ProfileModalContent profile={profile} updateProfile={updateProfile} logout={logout} onClose={onClose} startEditing={startEditing} isWelcome={isWelcome} />;
 }
 
 function ProfileModalContent({
@@ -4373,14 +4566,18 @@ function ProfileModalContent({
   updateProfile,
   logout,
   onClose,
+  startEditing = false,
+  isWelcome = false,
 }: {
   profile: Profile;
   updateProfile: (p: Partial<Profile>) => void;
   logout: () => void | Promise<void>;
   onClose: () => void;
+  startEditing?: boolean;
+  isWelcome?: boolean;
 }) {
   const { isAdmin, applyCouponCode } = useApp();
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(startEditing);
   const [showSettings, setShowSettings] = useState(false);
   const [draft, setDraft] = useState(profile);
   const [couponInput, setCouponInput] = useState("");
@@ -4443,10 +4640,7 @@ function ProfileModalContent({
                 <LogOut size={20} style={{ color: "var(--text-muted)" }} />
                 <span className="text-sm font-semibold" style={{ color: "var(--fg)" }}>로그아웃</span>
               </button>
-              <button className="btn-press w-full py-4 rounded-xl flex items-center gap-3 px-4 cursor-pointer" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }} onClick={() => { if (confirm("정말 탈퇴하시겠습니까? 모든 데이터가 삭제됩니다.")) { localStorage.clear(); void Promise.resolve(logout()).then(() => onClose()); } }}>
-                <UserX size={20} style={{ color: "#EF4444" }} />
-                <span className="text-sm font-semibold" style={{ color: "#EF4444" }}>회원탈퇴</span>
-              </button>
+              <DeleteAccountButton logout={logout} onClose={onClose} />
             </div>
           </>
         ) : !editing ? (
@@ -4481,15 +4675,29 @@ function ProfileModalContent({
           </>
         ) : (
           <>
-            <h3 className="text-lg font-bold mb-5" style={{ color: "var(--fg)" }}>프로필 수정</h3>
+            {isWelcome ? (
+              <div className="mb-5">
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "var(--gradient-cta)", boxShadow: "var(--shadow-cta-sm)" }}>
+                    <span className="text-xl">👋</span>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold leading-tight" style={{ color: "var(--fg)" }}>TodoWallet에 오신 것을 환영해요!</h3>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>나를 소개해볼까요? 건너뛰어도 괜찮아요.</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <h3 className="text-lg font-bold mb-5" style={{ color: "var(--fg)" }}>프로필 수정</h3>
+            )}
             <div className="flex flex-col gap-4 mb-6">
-              {[{ key: "name" as const, label: "이름", ph: "이름을 입력하세요" }, { key: "job" as const, label: "직업", ph: "직업을 입력하세요" }, { key: "age" as const, label: "나이", ph: "나이를 입력하세요" }, { key: "vision" as const, label: "비전", ph: "나의 비전을 입력하세요" }].map((f) => (
+              {[{ key: "name" as const, label: "이름", ph: "이름을 입력하세요" }, { key: "job" as const, label: "직업", ph: "어떤 일을 하고 계신가요?" }, { key: "age" as const, label: "나이", ph: "나이를 입력하세요" }, { key: "vision" as const, label: "나의 비전", ph: "예: 3년 안에 독립하기, 건강한 습관 만들기…" }].map((f) => (
                 <div key={f.key}><label className="text-xs font-semibold mb-2 block tracking-wide" style={{ color: "var(--text-muted)" }}>{f.label}</label><input placeholder={f.ph} value={draft[f.key] || ""} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} className={inputStyle} style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }} /></div>
               ))}
             </div>
             <div className="flex gap-3">
-              <button className="btn-press flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-bold border-none cursor-pointer" onClick={handleSave} style={{ background: "var(--gradient-cta)", color: "#FFFFFF" }}><Check size={16} /> 저장</button>
-              <button className="btn-press flex-1 py-3 rounded-xl font-semibold cursor-pointer" onClick={() => setEditing(false)} style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>취소</button>
+              <button className="btn-press flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-bold border-none cursor-pointer" onClick={handleSave} style={{ background: "var(--gradient-cta)", color: "#FFFFFF" }}><Check size={16} /> 저장하기</button>
+              <button className="btn-press py-3 px-4 rounded-xl font-semibold cursor-pointer text-sm" onClick={isWelcome ? onClose : () => setEditing(false)} style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>{isWelcome ? "건너뛰기" : "취소"}</button>
             </div>
           </>
         )}
@@ -4541,20 +4749,35 @@ function PendingUndoBar({
   );
 }
 
+const WELCOME_SHOWN_KEY = "todowallet_welcome_shown_v1";
+
 function AppShell() {
   const { activeTab, setActiveTab, profile, regularCards, isAdmin, tick, pendingUndo, undoPendingRegularCompletion } = useApp();
   const [createOpen, setCreateOpen] = useState(false);
+  const [createInitialType, setCreateInitialType] = useState<"master" | "regular" | "recipe" | undefined>(undefined);
   const [profileOpen, setProfileOpen] = useState(false);
-  const todayIsoDate = new Date().toISOString().split("T")[0];
+  const [profileIsWelcome, setProfileIsWelcome] = useState(false);
+  const [profileSetupAutoOpenUsed, setProfileSetupAutoOpenUsed] = useState(false);
 
   const todayActiveCount = useMemo(() => {
     void tick;
     return regularCards.filter((c) => regularVisibleToday(c, new Date())).length;
   }, [regularCards, tick]);
+
   const todayCompletedCount = useMemo(() => {
     void tick;
-    return regularCards.filter((c) => c.isCompleted && !!c.completedAt && c.completedAt.startsWith(todayIsoDate)).length;
-  }, [regularCards, tick, todayIsoDate]);
+    const today = new Date().toISOString().split("T")[0];
+    return regularCards.filter((c) => c.isCompleted && !!c.completedAt && c.completedAt.startsWith(today)).length;
+  }, [regularCards, tick]);
+  useEffect(() => {
+    if (profileSetupAutoOpenUsed) return;
+    if (!isDefaultProfile(profile)) return;
+    if (localStorage.getItem(WELCOME_SHOWN_KEY)) return;
+    localStorage.setItem(WELCOME_SHOWN_KEY, "1");
+    setProfileSetupAutoOpenUsed(true);
+    setProfileIsWelcome(true);
+    setProfileOpen(true);
+  }, [profileSetupAutoOpenUsed, profile]);
 
   return (
     <div className="flex flex-col h-screen max-h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
@@ -4567,17 +4790,21 @@ function AppShell() {
               {activeTab !== "home" && " · 보관함"}
             </p>
             {activeTab === "home" && (
-              <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold"
-                style={{
-                  background: todayCompletedCount > 0 ? "rgba(34,197,94,0.15)" : "rgba(0,0,0,0.06)",
-                  color: todayCompletedCount > 0 ? "#16a34a" : "var(--text-muted)",
-                  border: todayCompletedCount > 0 ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(0,0,0,0.08)",
+              <div
+                className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg"
+                style={todayCompletedCount > 0 ? {
+                  color: "var(--gold-dim)",
+                  background: "rgba(var(--brand-rgb),0.1)",
+                  border: "1px solid rgba(var(--brand-rgb),0.22)",
+                } : {
+                  color: "var(--text-faint)",
+                  background: "transparent",
+                  border: "1px solid var(--border)",
                 }}
               >
-                <Check size={10} strokeWidth={3} />
-                오늘 {todayCompletedCount}개 완료
-              </span>
+                <Check size={11} strokeWidth={2.5} />
+                {todayCompletedCount}개 완료
+              </div>
             )}
           </div>
         </div>
@@ -4590,7 +4817,7 @@ function AppShell() {
               관리자
             </span>
           ) : null}
-          <button className="btn-press-sm relative w-11 h-11 rounded-full flex items-center justify-center text-base font-bold border-none cursor-pointer" onClick={() => setProfileOpen(true)} style={{ background: "var(--gradient-cta)", color: "#FFFFFF", boxShadow: "var(--shadow-cta-sm)" }}>
+          <button className="btn-press-sm relative w-11 h-11 rounded-full flex items-center justify-center text-base font-bold border-none cursor-pointer" onClick={() => { setProfileIsWelcome(false); setProfileOpen(true); }} style={{ background: "var(--gradient-cta)", color: "#FFFFFF", boxShadow: "var(--shadow-cta-sm)" }}>
             {profile.name?.[0] ?? "N"}
             {isAdmin ? (
               <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white" style={{ background: "#7C3AED" }}>
@@ -4602,7 +4829,14 @@ function AppShell() {
       </header>
 
       <main className="flex-1 overflow-hidden relative">
-        {activeTab === "home" && <HomeScreen />}
+        {activeTab === "home" && (
+          <HomeScreen
+            onCreateMaster={() => {
+              setCreateInitialType("master");
+              setCreateOpen(true);
+            }}
+          />
+        )}
         {activeTab === "vault" && <VaultScreen />}
       </main>
 
@@ -4634,7 +4868,14 @@ function AppShell() {
         </button>
 
         {/* Plus button */}
-        <button className="btn-press-sm w-14 h-14 rounded-full flex items-center justify-center border-none cursor-pointer" onClick={() => setCreateOpen(true)} style={{ background: "var(--gradient-cta)", boxShadow: "var(--shadow-nav-fab)", transition: "transform 0.2s", transform: createOpen ? "rotate(45deg)" : "rotate(0deg)" }}>
+        <button
+          className="btn-press-sm w-14 h-14 rounded-full flex items-center justify-center border-none cursor-pointer"
+          onClick={() => {
+            setCreateInitialType(undefined);
+            setCreateOpen(true);
+          }}
+          style={{ background: "var(--gradient-cta)", boxShadow: "var(--shadow-nav-fab)", transition: "transform 0.2s", transform: createOpen ? "rotate(45deg)" : "rotate(0deg)" }}
+        >
           <Plus size={26} color="#FFFFFF" strokeWidth={2.5} />
         </button>
 
@@ -4650,8 +4891,15 @@ function AppShell() {
         </button>
       </nav>
 
-      <CreateCardSheet open={createOpen} onClose={() => setCreateOpen(false)} />
-      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <CreateCardSheet
+        open={createOpen}
+        onClose={() => {
+          setCreateOpen(false);
+          setCreateInitialType(undefined);
+        }}
+        initialType={createInitialType}
+      />
+      <ProfileModal open={profileOpen} onClose={() => { setProfileOpen(false); setProfileIsWelcome(false); }} startEditing={profileIsWelcome} isWelcome={profileIsWelcome} />
     </div>
   );
 }
