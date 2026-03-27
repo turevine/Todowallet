@@ -52,6 +52,19 @@ const formatDateInputValue = (isoString: string) => {
   return d.toISOString().split("T")[0];
 };
 
+const getDdayLabel = (deadline?: string) => {
+  if (!deadline?.trim()) return "기한 없음";
+  const target = new Date(deadline);
+  if (Number.isNaN(target.getTime())) return "기한 미정";
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const diffDays = Math.ceil((startOfTarget.getTime() - startOfToday.getTime()) / 86400000);
+  if (diffDays > 0) return `D-${diffDays}`;
+  if (diffDays === 0) return "D-DAY";
+  return `D+${Math.abs(diffDays)}`;
+};
+
 const generateId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 /** 로고 스택 최상단 레이어 — 마스터 카드 강조용 */
@@ -1689,6 +1702,8 @@ function HomeScreen() {
   /** 카드별 체크리스트 페이지 (0부터, 페이지당 CHECKLIST_ITEMS_PER_PAGE개) */
   const [checklistPageByCard, setChecklistPageByCard] = useState<Record<string, number>>({});
   const checklistSwipeRef = useRef<{ cardId: string; x: number } | null>(null);
+  const [goalBannerIndex, setGoalBannerIndex] = useState(0);
+  const goalBannerSwipeRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1717,6 +1732,20 @@ function HomeScreen() {
     homeMasterPage !== "all" && !homeMasterPages.some((m) => m.id === homeMasterPage)
       ? "all"
       : homeMasterPage;
+  const selectedHomeMaster = useMemo(
+    () => (effectiveHomeMasterPage === "all" ? null : homeMasterPages.find((m) => m.id === effectiveHomeMasterPage) ?? null),
+    [effectiveHomeMasterPage, homeMasterPages],
+  );
+  const goalBannerMasters = useMemo(() => {
+    const hasGoal = (m: MasterCard) => Boolean(m.hasGoal || m.goalContent?.trim() || m.goalDeadline);
+    if (effectiveHomeMasterPage === "all") return masterCards.filter(hasGoal);
+    if (selectedHomeMaster && hasGoal(selectedHomeMaster)) return [selectedHomeMaster];
+    return [];
+  }, [effectiveHomeMasterPage, masterCards, selectedHomeMaster]);
+  const safeGoalBannerIndex = goalBannerMasters.length === 0 ? 0 : Math.min(goalBannerIndex, goalBannerMasters.length - 1);
+  const activeGoalBanner = goalBannerMasters[safeGoalBannerIndex] ?? null;
+  const activeGoalBannerText = activeGoalBanner?.goalContent?.trim() || "목표 내용을 설정해 주세요";
+  const activeGoalBannerDday = getDdayLabel(activeGoalBanner?.goalDeadline);
   const visibleRegular = useMemo(
     () => (effectiveHomeMasterPage === "all" ? activeRegular : activeRegular.filter((c) => c.masterId === effectiveHomeMasterPage)),
     [activeRegular, effectiveHomeMasterPage],
@@ -1726,18 +1755,42 @@ function HomeScreen() {
     [regularCards],
   );
   const showCardMgmt = !focusedId && (visibleRegular.length > 0 || scheduledPending.length > 0);
+
+  useEffect(() => {
+    if (goalBannerMasters.length === 0) {
+      setGoalBannerIndex(0);
+      return;
+    }
+    setGoalBannerIndex((prev) => (prev >= goalBannerMasters.length ? 0 : prev));
+  }, [goalBannerMasters]);
+
+  useEffect(() => {
+    if (focusedId || goalBannerMasters.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setGoalBannerIndex((prev) => (prev + 1) % goalBannerMasters.length);
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [focusedId, goalBannerMasters.length]);
   
   // Card stack configuration
   const OVERLAP = 52; // How much each card overlaps the one below
   const HOVER_LIFT = -12; // How much to lift on hover (negative = up toward screen top)
   
   // Focused card configuration  
-  const FOCUSED_TOP = 60; // Space for back/edit buttons above card
+  const FOCUSED_TOP = 124; // Space for top action + goal widget above card
   const QUEUE_VISIBLE_HEIGHT = 32; // How much of queued cards is visible (상단 정리된 부분)
   
   // Get focused card for detail view
   const focusedCard = focusedId ? visibleRegular.find(c => c.id === focusedId) : null;
   const focusedIndex = focusedId ? visibleRegular.findIndex(c => c.id === focusedId) : -1;
+  const focusedMaster = focusedCard ? (masterCards.find((m) => m.id === focusedCard.masterId) ?? null) : null;
+  const focusedMasterName = focusedMaster?.name ?? "";
+  const focusedMasterGoalText = focusedMaster?.goalContent?.trim() || "목표 내용을 설정해 주세요";
+  const focusedMasterDeadline = focusedMaster?.goalDeadline ?? "";
+  const focusedMasterDday = getDdayLabel(focusedMasterDeadline);
+  const hasFocusedMasterGoalWidget = Boolean(
+    focusedMaster && (focusedMaster.hasGoal || focusedMaster.goalContent?.trim() || focusedMaster.goalDeadline),
+  );
 
   // Individual hover lift - NO wave effect, only the hovered card lifts
   const getHoverOffset = (cardIndex: number) => {
@@ -1821,14 +1874,21 @@ function HomeScreen() {
   };
 
   const addCheckItem = () => {
-    if (!focusedCard || !newCheckItem.trim()) return;
-    const currentList = getChecklist(focusedCard.id);
-    if (currentList.length >= CHECKLIST_MAX_TOTAL) return;
-    const newItem = { id: generateId(), text: newCheckItem.trim(), checked: false };
-    const nextList = [...currentList, newItem];
-    const newPage = Math.floor((nextList.length - 1) / CHECKLIST_ITEMS_PER_PAGE);
-    updateChecklist(focusedCard.id, () => nextList);
-    setChecklistPageByCard((p) => ({ ...p, [focusedCard.id]: newPage }));
+    if (!focusedCard) return;
+    const cardId = focusedCard.id;
+    const text = newCheckItem.trim();
+    if (!text) return;
+    let didAdd = false;
+    let newPage = 0;
+    updateChecklist(cardId, (prev) => {
+      if (prev.length >= CHECKLIST_MAX_TOTAL) return prev;
+      const nextList = [...prev, { id: generateId(), text, checked: false }];
+      newPage = Math.floor((nextList.length - 1) / CHECKLIST_ITEMS_PER_PAGE);
+      didAdd = true;
+      return nextList;
+    });
+    if (!didAdd) return;
+    setChecklistPageByCard((p) => ({ ...p, [cardId]: newPage }));
     setNewCheckItem("");
   };
 
@@ -1906,13 +1966,88 @@ function HomeScreen() {
 
   if (visibleRegular.length === 0) {
     return (
-      <div className="animate-fadeInUp flex flex-col items-center justify-center h-full gap-6 p-16">
-        <div className="w-20 h-20 rounded-3xl flex items-center justify-center" style={{ background: "rgba(var(--brand-rgb),0.08)", border: "1px solid rgba(var(--brand-rgb),0.2)" }}>
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="6" y="12" width="28" height="18" rx="3" stroke="var(--gold)" strokeWidth="1.5" /><rect x="6" y="17" width="28" height="2" fill="var(--gold)" opacity="0.4" /><line x1="20" y1="8" x2="20" y2="12" stroke="var(--gold)" strokeWidth="1.5" /><line x1="16" y1="8" x2="24" y2="8" stroke="var(--gold)" strokeWidth="1.5" /></svg>
-        </div>
-        <div className="text-center">
-          <h3 className="text-lg font-bold mb-2" style={{ color: "var(--fg)" }}>오늘의 카드가 없어요</h3>
-          <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>아래 + 버튼을 눌러<br />새로운 카드를 발급받으세요</p>
+      <div className="relative w-full h-full overflow-auto">
+        {!focusedId && activeGoalBanner && (
+          <div className="px-5 mt-1 mb-3" style={{ maxWidth: 500, margin: "0 auto" }}>
+            <div
+              className="rounded-2xl px-3.5 py-3"
+              style={{
+                background: "linear-gradient(135deg, rgba(var(--brand-rgb),0.14), rgba(var(--brand-rgb),0.06))",
+                border: "1px solid rgba(var(--brand-rgb),0.35)",
+                boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+              }}
+              onTouchStart={(e) => {
+                goalBannerSwipeRef.current = e.touches[0]?.clientX ?? null;
+              }}
+              onTouchEnd={(e) => {
+                if (goalBannerMasters.length <= 1) return;
+                const startX = goalBannerSwipeRef.current;
+                goalBannerSwipeRef.current = null;
+                if (startX === null) return;
+                const endX = e.changedTouches[0]?.clientX ?? startX;
+                const dx = endX - startX;
+                if (Math.abs(dx) < 48) return;
+                if (dx < 0) {
+                  setGoalBannerIndex((prev) => (prev + 1) % goalBannerMasters.length);
+                } else {
+                  setGoalBannerIndex((prev) => (prev - 1 + goalBannerMasters.length) % goalBannerMasters.length);
+                }
+              }}
+            >
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <p className="text-[11px] font-bold tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  {activeGoalBanner.name} 목표
+                </p>
+                <span
+                  className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-lg"
+                  style={{
+                    color: activeGoalBannerDday === "D-DAY" ? "#fff" : "var(--gold-dim)",
+                    background: activeGoalBannerDday === "D-DAY" ? "rgba(244,63,94,0.75)" : "rgba(var(--brand-rgb),0.16)",
+                    border: activeGoalBannerDday === "D-DAY" ? "1px solid rgba(244,63,94,0.95)" : "1px solid rgba(var(--brand-rgb),0.35)",
+                  }}
+                >
+                  {activeGoalBannerDday}
+                </span>
+              </div>
+              <p className="text-sm font-semibold leading-snug" style={{ color: "var(--fg)" }}>
+                {activeGoalBannerText}
+              </p>
+              {activeGoalBanner.goalDeadline && (
+                <p className="font-mono text-[11px] mt-1.5" style={{ color: "var(--text-faint)" }}>
+                  기한 {activeGoalBanner.goalDeadline}
+                </p>
+              )}
+              {goalBannerMasters.length > 1 && (
+                <div className="mt-2 flex items-center justify-between">
+                  <p className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                    좌우로 스와이프하거나 10초마다 자동 전환
+                  </p>
+                  <div className="flex items-center gap-1">
+                    {goalBannerMasters.map((m, idx) => (
+                      <span
+                        key={m.id}
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: 999,
+                          background: idx === safeGoalBannerIndex ? "var(--gold)" : "rgba(255,255,255,0.35)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="animate-fadeInUp flex flex-col items-center justify-center h-full gap-6 p-16">
+          <div className="w-20 h-20 rounded-3xl flex items-center justify-center" style={{ background: "rgba(var(--brand-rgb),0.08)", border: "1px solid rgba(var(--brand-rgb),0.2)" }}>
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="6" y="12" width="28" height="18" rx="3" stroke="var(--gold)" strokeWidth="1.5" /><rect x="6" y="17" width="28" height="2" fill="var(--gold)" opacity="0.4" /><line x1="20" y1="8" x2="20" y2="12" stroke="var(--gold)" strokeWidth="1.5" /><line x1="16" y1="8" x2="24" y2="8" stroke="var(--gold)" strokeWidth="1.5" /></svg>
+          </div>
+          <div className="text-center">
+            <h3 className="text-lg font-bold mb-2" style={{ color: "var(--fg)" }}>오늘의 카드가 없어요</h3>
+            <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>아래 + 버튼을 눌러<br />새로운 카드를 발급받으세요</p>
+          </div>
         </div>
       </div>
     );
@@ -2012,6 +2147,79 @@ function HomeScreen() {
           </div>
         </div>
       )}
+      {!focusedId && activeGoalBanner && (
+        <div className="px-5 mb-2" style={{ maxWidth: 500, margin: "0 auto" }}>
+          <div
+            className="rounded-2xl px-3.5 py-3"
+            style={{
+              background: "linear-gradient(135deg, rgba(var(--brand-rgb),0.14), rgba(var(--brand-rgb),0.06))",
+              border: "1px solid rgba(var(--brand-rgb),0.35)",
+              boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+            }}
+            onTouchStart={(e) => {
+              goalBannerSwipeRef.current = e.touches[0]?.clientX ?? null;
+            }}
+            onTouchEnd={(e) => {
+              if (goalBannerMasters.length <= 1) return;
+              const startX = goalBannerSwipeRef.current;
+              goalBannerSwipeRef.current = null;
+              if (startX === null) return;
+              const endX = e.changedTouches[0]?.clientX ?? startX;
+              const dx = endX - startX;
+              if (Math.abs(dx) < 48) return;
+              if (dx < 0) {
+                setGoalBannerIndex((prev) => (prev + 1) % goalBannerMasters.length);
+              } else {
+                setGoalBannerIndex((prev) => (prev - 1 + goalBannerMasters.length) % goalBannerMasters.length);
+              }
+            }}
+          >
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <p className="text-[11px] font-bold tracking-wide" style={{ color: "var(--text-muted)" }}>
+                {activeGoalBanner.name} 목표
+              </p>
+              <span
+                className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-lg"
+                style={{
+                  color: activeGoalBannerDday === "D-DAY" ? "#fff" : "var(--gold-dim)",
+                  background: activeGoalBannerDday === "D-DAY" ? "rgba(244,63,94,0.75)" : "rgba(var(--brand-rgb),0.16)",
+                  border: activeGoalBannerDday === "D-DAY" ? "1px solid rgba(244,63,94,0.95)" : "1px solid rgba(var(--brand-rgb),0.35)",
+                }}
+              >
+                {activeGoalBannerDday}
+              </span>
+            </div>
+            <p className="text-sm font-semibold leading-snug" style={{ color: "var(--fg)" }}>
+              {activeGoalBannerText}
+            </p>
+            {activeGoalBanner.goalDeadline && (
+              <p className="font-mono text-[11px] mt-1.5" style={{ color: "var(--text-faint)" }}>
+                기한 {activeGoalBanner.goalDeadline}
+              </p>
+            )}
+            {goalBannerMasters.length > 1 && (
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                  좌우로 스와이프하거나 10초마다 자동 전환
+                </p>
+                <div className="flex items-center gap-1">
+                  {goalBannerMasters.map((m, idx) => (
+                    <span
+                      key={m.id}
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: 999,
+                        background: idx === safeGoalBannerIndex ? "var(--gold)" : "rgba(255,255,255,0.35)",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {/* 카드 관리 */}
       {showCardMgmt && (
         <div className="flex justify-end px-5 mb-1" style={{ maxWidth: 500, margin: "0 auto" }}>
@@ -2058,6 +2266,35 @@ function HomeScreen() {
           </button>
         </div>
       )}
+      {focusedId && focusedCard && hasFocusedMasterGoalWidget && (
+        <div className="absolute left-5 right-5 z-[395] animate-fadeIn" style={{ top: 46, maxWidth: 460, margin: "0 auto" }}>
+          <div className="rounded-2xl px-3.5 py-2.5" style={{ background: "var(--surface-1)", border: "1px solid var(--border)", boxShadow: "0 4px 14px rgba(0,0,0,0.08)" }}>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <p className="text-[11px] font-bold tracking-wide" style={{ color: "var(--text-muted)" }}>
+                이 카드가 속한 목표 · {focusedMasterName || "미분류"}
+              </p>
+              <span
+                className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-lg"
+                style={{
+                  color: focusedMasterDday === "D-DAY" ? "#fff" : "var(--gold-dim)",
+                  background: focusedMasterDday === "D-DAY" ? "rgba(244,63,94,0.75)" : "rgba(var(--brand-rgb),0.14)",
+                  border: focusedMasterDday === "D-DAY" ? "1px solid rgba(244,63,94,0.95)" : "1px solid rgba(var(--brand-rgb),0.3)",
+                }}
+              >
+                {focusedMasterDday}
+              </span>
+            </div>
+            <p className="text-[13px] font-semibold leading-snug" style={{ color: "var(--fg)" }}>
+              {focusedMasterGoalText}
+            </p>
+            {focusedMasterDeadline && (
+              <p className="font-mono text-[11px] mt-1" style={{ color: "var(--text-faint)" }}>
+                기한 {focusedMasterDeadline}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Card Stack */}
       <div className={focusedId ? "absolute inset-0 flex justify-center" : "flex justify-center"} style={{ padding: "0 20px" }}>
@@ -2089,7 +2326,7 @@ function HomeScreen() {
                 scale = 1;
               } else {
                 const queueIndex = i < focusedIndex ? i : i - 1;
-                top = `calc(60px + (min(100vw, 500px) - 40px) * 0.632 + 150px + ${Math.min(queueIndex, 5) * 12}px)`;
+                top = `calc(${FOCUSED_TOP}px + (min(100vw, 500px) - 40px) * 0.632 + 150px + ${Math.min(queueIndex, 5) * 12}px)`;
                 zIndex = 100 + i;
                 opacity = 0.6;
                 pointerEvents = "none";
@@ -2311,7 +2548,7 @@ function HomeScreen() {
             <div
               className="absolute left-5 right-5 z-[320] animate-slideUp"
               style={{
-                top: `calc(60px + (min(100vw, 500px) - 40px) * 0.632 + 20px)`,
+                top: `calc(${FOCUSED_TOP}px + (min(100vw, 500px) - 40px) * 0.632 + 20px)`,
                 maxWidth: 460, margin: "0 auto",
               }}
             >
@@ -2399,7 +2636,7 @@ function HomeScreen() {
             <div
               className="absolute left-5 right-5 z-[320] animate-slideUp"
               style={{
-                top: `calc(60px + (min(100vw, 500px) - 40px) * 0.632 + 20px)`,
+                top: `calc(${FOCUSED_TOP}px + (min(100vw, 500px) - 40px) * 0.632 + 20px)`,
                 maxWidth: 460, margin: "0 auto",
               }}
             >
@@ -2446,7 +2683,13 @@ function HomeScreen() {
                   <input
                     value={newCheckItem}
                     onChange={(e) => setNewCheckItem(e.target.value)}
-                    onKeyDown={(e) => { if (e.nativeEvent.isComposing) return; if (e.key === "Enter") addCheckItem(); }}
+                    onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return;
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      addCheckItem();
+                    }}
                     placeholder={focusedChecklistAtMax ? `항목은 최대 ${CHECKLIST_MAX_TOTAL}개까지` : "할 일을 입력하세요"}
                     maxLength={30}
                     disabled={!focusedCard || focusedChecklistAtMax}
@@ -2455,6 +2698,7 @@ function HomeScreen() {
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
+                    type="button"
                     className="btn-press px-4 rounded-xl font-bold cursor-pointer"
                     style={{ background: focusedChecklistAtMax ? "var(--surface-2)" : "var(--gradient-cta)", color: focusedChecklistAtMax ? "var(--text-faint)" : "#fff", border: "none" }}
                     onClick={(e) => { e.stopPropagation(); addCheckItem(); }}
@@ -3273,7 +3517,7 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
   const [selectedType, setSelectedType] = useState<"master" | "preset" | "regular" | "recipe">("regular");
   const [cardName, setCardName] = useState("");
   const [designId, setDesignId] = useState(CARD_PRESETS[0].id);
-  const [hasGoal, setHasGoal] = useState(false);
+  const [hasGoal, setHasGoal] = useState(true);
   const [goalContent, setGoalContent] = useState("");
   const [goalDeadline, setGoalDeadline] = useState("");
   const [masterId, setMasterId] = useState("");
@@ -3295,7 +3539,7 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
     setStep("type");
     setCardName("");
     setDesignId(CARD_PRESETS[0].id);
-    setHasGoal(false);
+    setHasGoal(true);
     setGoalContent("");
     setGoalDeadline("");
     setMasterId("");
@@ -3314,6 +3558,9 @@ function CreateCardSheet({ open, onClose }: { open: boolean; onClose: () => void
   const handleTypeSelect = (type: "master" | "regular" | "recipe") => {
     setSelectedType(type);
     setStep("form");
+    if (type === "master") {
+      setHasGoal(true);
+    }
     if ((type === "regular" || type === "recipe") && activeMasters.length > 0) {
       setMasterId(activeMasters[0].id);
     }
