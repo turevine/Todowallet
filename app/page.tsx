@@ -2185,6 +2185,9 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
           <PendingDeleteBar cardName={regularCards.find((c) => c.id === pendingDeleteId)?.name ?? ""} onUndo={undoDelete} />
         )}
         {showRecap && recapData && <DailyRecapSheet data={recapData} onClose={() => setShowRecap(false)} />}
+        <div className="px-5 pt-2 pb-1 flex justify-end" style={{ maxWidth: 500, margin: "0 auto" }}>
+          <WeeklyHeatmap regularCards={regularCards} />
+        </div>
         {!focusedId && yesterdayStats && (
           <div className="mt-3" style={{ maxWidth: 500, margin: "12px auto 0" }}>
             <YesterdayBanner
@@ -2390,7 +2393,7 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
         <PendingDeleteBar cardName={regularCards.find((c) => c.id === pendingDeleteId)?.name ?? ""} onUndo={undoDelete} />
       )}
       {showRecap && recapData && <DailyRecapSheet data={recapData} onClose={() => setShowRecap(false)} />}
-      {!focusedId && !pendingDeleteId && (
+      {!pendingDeleteId && (
         <div className="px-5 pt-2 pb-1 flex justify-end" style={{ maxWidth: 500, margin: "0 auto" }}>
           <WeeklyHeatmap regularCards={regularCards} />
         </div>
