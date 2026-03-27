@@ -995,153 +995,129 @@ function LoginScreen() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setError(null);
+    setInfo(null);
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    try {
+      const res = await fetch(`${origin}/api/auth/public-config`, { cache: "no-store" });
+      const data = (await res.json()) as { url?: string; anonKey?: string };
+      const u = (data.url ?? "").trim();
+      const a = (data.anonKey ?? "").trim();
+      if (!u || !a) { setError("Supabase 설정이 없습니다."); return; }
+      setSupabaseRuntimeConfig(u, a);
+    } catch {
+      setError("네트워크 오류로 설정을 불러오지 못했습니다.");
+      return;
+    }
+    const sb = getSupabase();
+    const { error: oauthErr } = await sb.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: typeof window !== "undefined" ? `${window.location.origin}/` : undefined },
+    });
+    if (oauthErr) setError(oauthErr.message);
+  };
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 sm:p-10 relative overflow-hidden" style={{ background: "var(--bg)" }}>
       <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(var(--brand-rgb),0.08) 0%, transparent 70%)" }} />
 
       <div className="animate-fadeInUp flex flex-col items-center gap-8 w-full max-w-sm z-10">
+        {/* 로고 */}
         <div className="flex flex-col items-center gap-4">
-          <div
-            className="overflow-hidden shadow-xl shrink-0"
-            style={{
-              borderRadius: "22%",
-              width: 88,
-              height: 88,
-              boxShadow: "0 16px 48px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(0,0,0,0.08)",
-            }}
-          >
+          <div className="overflow-hidden shadow-xl shrink-0" style={{ borderRadius: "22%", width: 88, height: 88, boxShadow: "0 16px 48px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(0,0,0,0.08)" }}>
             <BrandLogo size={88} withBackground />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--fg)", fontFamily: "var(--font-poppins), ui-sans-serif, system-ui, sans-serif" }}>
-              TodoWallet
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--fg)", fontFamily: "var(--font-poppins), ui-sans-serif, system-ui, sans-serif" }}>TodoWallet</h1>
             <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>한 일은 사라지지 않는다</p>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="w-full flex flex-col gap-3">
-        <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+        <div className="w-full flex flex-col gap-3">
+          {/* 구글 로그인 */}
           <button
             type="button"
-            className="flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors cursor-pointer"
-            onClick={() => { setMode("login"); setError(null); setInfo(null); }}
-            style={{ background: mode === "login" ? "var(--surface-1)" : "transparent", color: mode === "login" ? "var(--fg)" : "var(--text-muted)", boxShadow: mode === "login" ? "0 1px 2px rgba(0,0,0,0.06)" : "none" }}
+            disabled={loading}
+            className="btn-press w-full flex items-center justify-center gap-3 rounded-2xl py-4 font-semibold text-sm cursor-pointer disabled:opacity-60"
+            style={{ background: "var(--surface-1)", color: "var(--fg)", border: "1px solid var(--border)", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}
+            onClick={handleGoogleLogin}
           >
-            로그인
+            <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+              <path d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" fill="#FFC107"/>
+              <path d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" fill="#FF3D00"/>
+              <path d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" fill="#4CAF50"/>
+              <path d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" fill="#1976D2"/>
+            </svg>
+            Google로 계속하기
           </button>
-          <button
-            type="button"
-            className="flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors cursor-pointer"
-            onClick={() => { setMode("signup"); setError(null); setInfo(null); }}
-            style={{ background: mode === "signup" ? "var(--surface-1)" : "transparent", color: mode === "signup" ? "var(--fg)" : "var(--text-muted)", boxShadow: mode === "signup" ? "0 1px 2px rgba(0,0,0,0.06)" : "none" }}
-          >
-            회원가입
-          </button>
-        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium px-0.5" style={{ color: "var(--text-muted)" }}>이메일</span>
-          <div className="flex items-center gap-2 rounded-xl px-3 py-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
-            <Mail size={18} style={{ color: "var(--text-faint)", flexShrink: 0 }} />
-            <input
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full min-w-0 bg-transparent border-none outline-none text-sm"
-              style={{ color: "var(--fg)" }}
-              placeholder="you@example.com"
-            />
+          {/* 구분선 */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+            <span className="text-xs" style={{ color: "var(--text-faint)" }}>또는 이메일로</span>
+            <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
           </div>
-        </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium px-0.5" style={{ color: "var(--text-muted)" }}>비밀번호</span>
-          <div className="flex items-center gap-2 rounded-xl px-3 py-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
-            <Lock size={18} style={{ color: "var(--text-faint)", flexShrink: 0 }} />
-            <input
-              type="password"
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full min-w-0 bg-transparent border-none outline-none text-sm"
-              style={{ color: "var(--fg)" }}
-              placeholder="6자 이상"
-            />
-          </div>
-        </label>
+          {/* 이메일 폼 */}
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 rounded-xl px-3 py-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+              <Mail size={18} style={{ color: "var(--text-faint)", flexShrink: 0 }} />
+              <input
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full min-w-0 bg-transparent border-none outline-none text-sm"
+                style={{ color: "var(--fg)" }}
+                placeholder="이메일"
+              />
+            </div>
+            <div className="flex items-center gap-2 rounded-xl px-3 py-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+              <Lock size={18} style={{ color: "var(--text-faint)", flexShrink: 0 }} />
+              <input
+                type="password"
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full min-w-0 bg-transparent border-none outline-none text-sm"
+                style={{ color: "var(--fg)" }}
+                placeholder="비밀번호 (6자 이상)"
+              />
+            </div>
 
-        <label className="flex items-center gap-2 px-1 py-1 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={autoLogin}
-            onChange={(e) => setAutoLogin(e.target.checked)}
-            className="accent-blue-600"
-          />
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>자동 로그인 유지</span>
-        </label>
+            <label className="flex items-center gap-2 px-1 cursor-pointer select-none">
+              <input type="checkbox" checked={autoLogin} onChange={(e) => setAutoLogin(e.target.checked)} className="accent-blue-600" />
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>자동 로그인 유지</span>
+            </label>
 
-        {error && (
-          <p className="text-sm px-1 rounded-lg py-2" style={{ color: "#F87171", background: "rgba(248,113,113,0.08)" }}>{error}</p>
-        )}
-        {info && (
-          <p className="text-sm px-1 rounded-lg py-2" style={{ color: "var(--fg)", background: "rgba(var(--brand-rgb),0.08)" }}>{info}</p>
-        )}
+            {error && <p className="text-sm px-1 rounded-lg py-2" style={{ color: "#F87171", background: "rgba(248,113,113,0.08)" }}>{error}</p>}
+            {info && <p className="text-sm px-1 rounded-lg py-2" style={{ color: "var(--fg)", background: "rgba(var(--brand-rgb),0.08)" }}>{info}</p>}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="btn-press w-full flex items-center justify-center gap-2 rounded-2xl py-4 font-semibold text-sm cursor-pointer disabled:opacity-60"
-          style={{ background: "var(--gradient-cta)", color: "#FFFFFF", border: "none" }}
-        >
-          {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-          {mode === "signup" ? "이메일로 가입하기" : "로그인"}
-        </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-press w-full flex items-center justify-center gap-2 rounded-2xl py-4 font-semibold text-sm cursor-pointer disabled:opacity-60"
+              style={{ background: "var(--gradient-cta)", color: "#FFFFFF", border: "none" }}
+            >
+              {loading ? <Loader2 size={18} className="animate-spin" /> : null}
+              {mode === "signup" ? "이메일로 가입하기" : "이메일로 로그인"}
+            </button>
+          </form>
 
-        <div className="flex items-center gap-3 my-1">
-          <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
-          <span className="text-xs" style={{ color: "var(--text-faint)" }}>또는</span>
-          <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+          {/* 회원가입 링크 */}
+          <p className="text-center text-xs" style={{ color: "var(--text-faint)" }}>
+            {mode === "login" ? (
+              <>계정이 없으신가요?{" "}
+                <button type="button" className="font-semibold underline underline-offset-2 cursor-pointer" style={{ color: "var(--text-muted)" }} onClick={() => { setMode("signup"); setError(null); setInfo(null); }}>회원가입</button>
+              </>
+            ) : (
+              <>이미 계정이 있으신가요?{" "}
+                <button type="button" className="font-semibold underline underline-offset-2 cursor-pointer" style={{ color: "var(--text-muted)" }} onClick={() => { setMode("login"); setError(null); setInfo(null); }}>로그인</button>
+              </>
+            )}
+          </p>
         </div>
-
-        <button
-          type="button"
-          disabled={loading}
-          className="btn-press w-full flex items-center justify-center gap-3 rounded-2xl py-3.5 font-semibold text-sm cursor-pointer disabled:opacity-60"
-          style={{ background: "var(--surface-1)", color: "var(--fg)", border: "1px solid var(--border)" }}
-          onClick={async () => {
-            setError(null);
-            setInfo(null);
-            const origin = typeof window !== "undefined" ? window.location.origin : "";
-            try {
-              const res = await fetch(`${origin}/api/auth/public-config`, { cache: "no-store" });
-              const data = (await res.json()) as { url?: string; anonKey?: string };
-              const u = (data.url ?? "").trim();
-              const a = (data.anonKey ?? "").trim();
-              if (!u || !a) { setError("Supabase 설정이 없습니다."); return; }
-              setSupabaseRuntimeConfig(u, a);
-            } catch {
-              setError("네트워크 오류로 설정을 불러오지 못했습니다.");
-              return;
-            }
-            const sb = getSupabase();
-            const { error: oauthErr } = await sb.auth.signInWithOAuth({
-              provider: "google",
-              options: { redirectTo: typeof window !== "undefined" ? `${window.location.origin}/` : undefined },
-            });
-            if (oauthErr) setError(oauthErr.message);
-          }}
-        >
-          <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
-            <path d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" fill="#FFC107"/>
-            <path d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" fill="#FF3D00"/>
-            <path d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" fill="#4CAF50"/>
-            <path d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" fill="#1976D2"/>
-          </svg>
-          Google로 계속하기
-        </button>
-        </form>
       </div>
     </div>
   );
