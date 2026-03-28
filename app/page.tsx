@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
-import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, BookOpen, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2, Moon, Sun, BarChart2, Zap } from "lucide-react";
+import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, BookOpen, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2, Moon, Sun, BarChart2, Zap, Sparkles } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { getSupabase, isSupabaseConfigured, setSupabaseRuntimeConfig } from "@/lib/supabase/client";
 
@@ -153,6 +153,14 @@ interface Profile {
   age: string;
   vision: string;
   avatarColor: string;
+  /** 홈에서 되고 싶은 나 카드 표시 */
+  showIdealSelfCard: boolean;
+  /** 카드 제목 (비우면 기본 문구) */
+  idealSelfTitle: string;
+  /** 한 줄 다짐 */
+  idealMantra: string;
+  /** 키워드 (최대 8개) */
+  idealTraits: string[];
 }
 
 interface Session {
@@ -162,6 +170,14 @@ interface Session {
   duration: number;
   breakDuration: number;
   breaks: unknown[];
+}
+
+interface Milestone {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+  completedAt: string | null;
+  order: number;
 }
 
 interface MasterCard {
@@ -174,6 +190,7 @@ interface MasterCard {
   hasGoal?: boolean;
   goalContent?: string;
   goalDeadline?: string;
+  milestones?: Milestone[];
 }
 
 interface RegularCard {
@@ -249,7 +266,7 @@ interface AppContextType extends AppState {
   addMasterCard: (card: Omit<MasterCard, "id" | "createdAt" | "status">) => MasterCard;
   updateMasterCard: (
     id: string,
-    updates: Partial<Pick<MasterCard, "name" | "designPresetId" | "hasGoal" | "goalContent" | "goalDeadline">>,
+    updates: Partial<Pick<MasterCard, "name" | "designPresetId" | "hasGoal" | "goalContent" | "goalDeadline" | "milestones">>,
   ) => void;
   addRegularCard: (card: Omit<RegularCard, "id" | "createdAt" | "date" | "sessions" | "totalWorkSeconds" | "totalBreakSeconds" | "isWorking" | "isPaused" | "currentSessionStart" | "currentBreakStart" | "isCompleted" | "completedAt"> & { date?: string }) => RegularCard;
   addPresetCard: (card: Omit<PresetCard, "id" | "createdAt">) => PresetCard;
@@ -269,6 +286,10 @@ interface AppContextType extends AppState {
   /** 마스터 상태 전환 (골드 승급 시 미완료 일반카드 자동 완료) */
   setMasterStatus: (id: string, status: MasterCard["status"]) => void;
   completeMasterCard: (id: string, asGold: boolean) => void;
+  addMilestone: (masterId: string, text: string) => void;
+  toggleMilestone: (masterId: string, milestoneId: string) => void;
+  removeMilestone: (masterId: string, milestoneId: string) => void;
+  reorderMilestones: (masterId: string, milestoneIds: string[]) => void;
   startWork: (cardId: string) => void;
   stopWork: (cardId: string) => void;
   pauseWork: (cardId: string) => void;
@@ -290,7 +311,38 @@ const STORAGE_KEY = "todowallet_v3_light";
 const SUPABASE_STATE_TABLE = "user_wallet_data";
 const AUTO_LOGIN_PREF_KEY = "todowallet.autoLogin";
 
-const DEFAULT_PROFILE: Profile = { name: "나", job: "직업 입력", age: "나이 입력", vision: "비전 입력", avatarColor: "#2563EB" };
+const DEFAULT_PROFILE: Profile = {
+  name: "나",
+  job: "직업 입력",
+  age: "나이 입력",
+  vision: "비전 입력",
+  avatarColor: "#2563EB",
+  showIdealSelfCard: true,
+  idealSelfTitle: "",
+  idealMantra: "",
+  idealTraits: [],
+};
+
+const IDEAL_ACCENT_SWATCHES = ["#2563EB", "#7C3AED", "#DB2777", "#059669", "#D97706", "#DC2626", "#0891B2", "#4F46E5"];
+
+function normalizeProfile(p: Partial<Profile> | undefined): Profile {
+  const base = { ...DEFAULT_PROFILE, ...(p && typeof p === "object" ? p : {}) };
+  const traits = Array.isArray(base.idealTraits)
+    ? base.idealTraits.map((t) => String(t).trim()).filter(Boolean).slice(0, 8)
+    : [];
+  const ac = typeof base.avatarColor === "string" && base.avatarColor.trim() ? base.avatarColor.trim() : DEFAULT_PROFILE.avatarColor;
+  return {
+    name: typeof base.name === "string" ? base.name : DEFAULT_PROFILE.name,
+    job: typeof base.job === "string" ? base.job : DEFAULT_PROFILE.job,
+    age: typeof base.age === "string" ? base.age : DEFAULT_PROFILE.age,
+    vision: typeof base.vision === "string" ? base.vision : DEFAULT_PROFILE.vision,
+    avatarColor: ac,
+    showIdealSelfCard: base.showIdealSelfCard !== false,
+    idealSelfTitle: typeof base.idealSelfTitle === "string" ? base.idealSelfTitle : "",
+    idealMantra: typeof base.idealMantra === "string" ? base.idealMantra : "",
+    idealTraits: traits,
+  };
+}
 const isVisionUnset = (vision?: string) => {
   const value = (vision ?? "").trim();
   return !value || value === DEFAULT_PROFILE.vision;
@@ -370,7 +422,7 @@ function normalizeSyncedState(raw: unknown): SyncedAppState | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Partial<SyncedAppState>;
   return {
-    profile: obj.profile ?? DEFAULT_PROFILE,
+    profile: normalizeProfile(obj.profile as Partial<Profile> | undefined),
     masterCards: Array.isArray(obj.masterCards) ? obj.masterCards : [],
     presetCards: Array.isArray(obj.presetCards) ? obj.presetCards : [],
     regularCards: Array.isArray(obj.regularCards) ? obj.regularCards : [],
@@ -407,7 +459,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     return {
       authReady: false,
       isLoggedIn: false,
-      profile: saved.profile ?? DEFAULT_PROFILE,
+      profile: normalizeProfile(saved.profile as Partial<Profile> | undefined),
       masterCards: saved.masterCards ?? [],
       presetCards: saved.presetCards ?? [],
       regularCards: saved.regularCards ?? [],
@@ -704,7 +756,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       update(() => ({ isLoggedIn: false, isAdmin: false }));
     },
     applyCouponCode,
-    updateProfile: (p) => update((s) => ({ profile: { ...s.profile, ...p } })),
+    updateProfile: (p) => update((s) => ({ profile: normalizeProfile({ ...s.profile, ...p }) })),
     setActiveTab: (tab) => update(() => ({ activeTab: tab })),
     addMasterCard: (card) => {
       const newCard: MasterCard = { ...card, id: generateId(), createdAt: new Date().toISOString(), status: "active" };
@@ -837,6 +889,49 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     setMasterStatus: applyMasterStatus,
     completeMasterCard: (id, asGold) => {
       applyMasterStatus(id, asGold ? "gold" : "silver");
+    },
+    addMilestone: (masterId, text) => {
+      update((s) => ({
+        masterCards: s.masterCards.map((c) => {
+          if (c.id !== masterId) return c;
+          const milestones = c.milestones ?? [];
+          const newMilestone: Milestone = { id: generateId(), text, isCompleted: false, completedAt: null, order: milestones.length };
+          return { ...c, milestones: [...milestones, newMilestone] };
+        }),
+      }));
+    },
+    toggleMilestone: (masterId, milestoneId) => {
+      update((s) => ({
+        masterCards: s.masterCards.map((c) => {
+          if (c.id !== masterId || !c.milestones) return c;
+          return {
+            ...c,
+            milestones: c.milestones.map((m) =>
+              m.id === milestoneId
+                ? { ...m, isCompleted: !m.isCompleted, completedAt: !m.isCompleted ? new Date().toISOString() : null }
+                : m,
+            ),
+          };
+        }),
+      }));
+    },
+    removeMilestone: (masterId, milestoneId) => {
+      update((s) => ({
+        masterCards: s.masterCards.map((c) => {
+          if (c.id !== masterId || !c.milestones) return c;
+          return { ...c, milestones: c.milestones.filter((m) => m.id !== milestoneId) };
+        }),
+      }));
+    },
+    reorderMilestones: (masterId, milestoneIds) => {
+      update((s) => ({
+        masterCards: s.masterCards.map((c) => {
+          if (c.id !== masterId || !c.milestones) return c;
+          const map = new Map(c.milestones.map((m) => [m.id, m]));
+          const reordered = milestoneIds.map((id, i) => ({ ...map.get(id)!, order: i }));
+          return { ...c, milestones: reordered };
+        }),
+      }));
     },
     startWork: (cardId) => {
       const now = new Date().toISOString();
@@ -1811,8 +1906,247 @@ function YesterdayBanner({ completedCount, workSecs, onClose }: { completedCount
   );
 }
 
-function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
-  const { masterCards, regularCards, getLiveWorkSeconds, deleteRegularCard, reorderRegularCards, completeRegularCard, startWork, stopWork, startBreak, endBreak, getLiveBreakSeconds, updateRegularCard, tick } = useApp();
+function IdealSelfHomeCard({ profile, onEdit }: { profile: Profile; onEdit: () => void }) {
+  if (!profile.showIdealSelfCard) return null;
+  const accent = profile.avatarColor || DEFAULT_PROFILE.avatarColor;
+  const title = profile.idealSelfTitle.trim() || "되고 싶은 나";
+  const visionOk = !isVisionUnset(profile.vision);
+  const visionText = profile.vision.trim();
+  const mantra = profile.idealMantra.trim();
+  const traits = profile.idealTraits;
+  const hasRich = visionOk || mantra || traits.length > 0;
+
+  return (
+    <div className="px-5 mb-2" style={{ maxWidth: 500, margin: "0 auto" }}>
+      <button
+        type="button"
+        className="btn-press w-full text-left rounded-2xl px-4 py-3.5 cursor-pointer border-none"
+        style={{
+          background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 42%, rgba(15,23,42,0.25) 100%)`,
+          boxShadow: `0 8px 28px ${accent}40`,
+        }}
+        onClick={onEdit}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
+            style={{
+              background: "rgba(255,255,255,0.22)",
+              border: "1px solid rgba(255,255,255,0.35)",
+            }}
+          >
+            <Sparkles size={22} color="#fff" strokeWidth={2.2} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-bold tracking-widest mb-0.5" style={{ color: "rgba(255,255,255,0.8)" }}>
+              되고 싶은 나
+            </p>
+            <h3 className="text-[15px] font-bold leading-snug" style={{ color: "#fff" }}>
+              {title}
+            </h3>
+            {hasRich ? (
+              <>
+                {visionOk ? (
+                  <p className="text-[13px] mt-2 leading-relaxed line-clamp-4" style={{ color: "rgba(255,255,255,0.92)" }}>
+                    {visionText}
+                  </p>
+                ) : null}
+                {mantra ? (
+                  <p className="text-xs mt-2 italic font-medium" style={{ color: "rgba(255,255,255,0.88)" }}>
+                    &ldquo;{mantra}&rdquo;
+                  </p>
+                ) : null}
+                {traits.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mt-2.5">
+                    {traits.map((t, i) => (
+                      <span
+                        key={`${t}-${i}`}
+                        className="text-[11px] font-semibold px-2 py-0.5 rounded-lg"
+                        style={{ background: "rgba(255,255,255,0.2)", color: "#fff", border: "1px solid rgba(255,255,255,0.35)" }}
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(255,255,255,0.88)" }}>
+                한 줄이라도 적어두면 매일 그 방향을 떠올릴 수 있어요. 탭해서 꾸미기
+              </p>
+            )}
+          </div>
+          <ChevronRight size={18} color="rgba(255,255,255,0.55)" className="shrink-0 mt-1" />
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function MasterCardInStack({
+  master,
+  style,
+  onClick,
+  isFocused,
+  showBack,
+  onFlip,
+}: {
+  master: MasterCard;
+  style: React.CSSProperties;
+  onClick: () => void;
+  isFocused: boolean;
+  showBack: boolean;
+  onFlip: () => void;
+}) {
+  const { addMilestone, toggleMilestone, removeMilestone } = useApp();
+  const preset = getPreset(master.designPresetId);
+  const milestones = master.milestones ?? [];
+  const completedCount = milestones.filter(m => m.isCompleted).length;
+  const totalCount = milestones.length;
+  const dday = getDdayLabel(master.goalDeadline);
+  const [newMilestoneText, setNewMilestoneText] = useState("");
+
+  const frontContent = (
+    <div className="absolute inset-0 flex flex-col justify-between" style={{ padding: "12px 16px 14px" }}>
+      <div className="flex justify-between items-start">
+        <div className="w-12 h-9 rounded-md" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.3), rgba(255,255,255,0.08))", border: "1px solid rgba(255,255,255,0.15)" }} />
+        <div className="flex items-center gap-2">
+          {master.goalDeadline && (
+            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded-lg"
+              style={{ color: dday === "D-DAY" ? "#fff" : "rgba(255,255,255,0.8)", background: dday === "D-DAY" ? "rgba(244,63,94,0.75)" : "rgba(255,255,255,0.12)" }}>
+              {dday}
+            </span>
+          )}
+          <span className="text-[10px] font-bold tracking-wide" style={{ color: "rgba(255,255,255,0.5)" }}>MASTER</span>
+        </div>
+      </div>
+      <div>
+        {master.goalContent && (
+          <p className="text-[11px] mb-1 leading-snug" style={{ color: "rgba(255,255,255,0.55)" }}>
+            {master.goalContent}
+          </p>
+        )}
+        <div className="text-sm font-bold" style={{ color: preset.textColor }}>{master.name}</div>
+        {totalCount > 0 && (
+          <div className="flex items-center gap-1.5 mt-2">
+            {milestones.map((m) => (
+              <div key={m.id} style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: m.isCompleted ? "#22C55E" : "rgba(255,255,255,0.2)",
+                border: m.isCompleted ? "none" : "1px solid rgba(255,255,255,0.3)",
+                transition: "all 0.2s"
+              }} />
+            ))}
+            <span className="text-[10px] font-mono ml-1" style={{ color: "rgba(255,255,255,0.45)" }}>
+              {completedCount}/{totalCount}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const backContent = (
+    <div className="absolute inset-0 flex flex-col" style={{ padding: "12px 16px" }}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-bold tracking-wide" style={{ color: "rgba(255,255,255,0.5)" }}>MILESTONES</span>
+        <span className="text-[10px] font-mono" style={{ color: "rgba(255,255,255,0.4)" }}>
+          {completedCount}/{totalCount}
+        </span>
+      </div>
+      {totalCount > 0 && (
+        <div style={{ height: 3, borderRadius: 2, background: "rgba(255,255,255,0.1)", marginBottom: 8 }}>
+          <div style={{ height: "100%", borderRadius: 2, width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%`, background: "#22C55E", transition: "width 0.3s" }} />
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto" style={{ maxHeight: "calc(100% - 70px)" }}>
+        {milestones.map((m) => (
+          <div key={m.id} className="flex items-center gap-2 py-1" onClick={(e) => { e.stopPropagation(); toggleMilestone(master.id, m.id); }}>
+            <div style={{
+              width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+              border: m.isCompleted ? "none" : "1.5px solid rgba(255,255,255,0.35)",
+              background: m.isCompleted ? "#22C55E" : "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", transition: "all 0.15s"
+            }}>
+              {m.isCompleted && <Check size={10} color="#fff" strokeWidth={3} />}
+            </div>
+            <span style={{
+              fontSize: 12, color: m.isCompleted ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.85)",
+              textDecoration: m.isCompleted ? "line-through" : "none",
+              flex: 1
+            }}>{m.text}</span>
+            <button type="button" onClick={(e) => { e.stopPropagation(); removeMilestone(master.id, m.id); }}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 2, opacity: 0.4 }}>
+              <X size={12} color="#fff" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2 mt-auto pt-2" onClick={(e) => e.stopPropagation()}>
+        <input
+          value={newMilestoneText}
+          onChange={(e) => setNewMilestoneText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newMilestoneText.trim()) {
+              addMilestone(master.id, newMilestoneText.trim());
+              setNewMilestoneText("");
+            }
+          }}
+          placeholder="단계 추가..."
+          className="flex-1 text-[11px] rounded-lg px-2 py-1.5 outline-none"
+          style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.8)" }}
+        />
+        <button
+          type="button"
+          onClick={() => { if (newMilestoneText.trim()) { addMilestone(master.id, newMilestoneText.trim()); setNewMilestoneText(""); } }}
+          className="btn-press-sm px-2 py-1.5 rounded-lg text-[11px] font-bold"
+          style={{ background: newMilestoneText.trim() ? "#22C55E" : "rgba(255,255,255,0.1)", color: "#fff", border: "none", cursor: "pointer" }}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div
+      className="absolute left-0 right-0"
+      style={{
+        ...style,
+        transition: "all 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+        pointerEvents: style.pointerEvents ?? "auto",
+      }}
+      onClick={isFocused ? onFlip : onClick}
+    >
+      <div style={{ perspective: "1000px" }}>
+        <div style={{
+          transformStyle: "preserve-3d",
+          transition: "transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
+          transform: showBack ? "rotateY(180deg)" : "rotateY(0deg)"
+        }}>
+          <div style={{ backfaceVisibility: "hidden" }}>
+            <div className="relative w-full rounded-2xl overflow-hidden card-shimmer"
+              style={{ aspectRatio: "85.6 / 53.98", background: preset.gradient, border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 8px 24px rgba(0,0,0,0.18)" }}>
+              <div className={preset.patternClass} style={{ position: "absolute", inset: 0, opacity: 0.3 }} />
+              {frontContent}
+            </div>
+          </div>
+          <div style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)", position: "absolute", top: 0, left: 0, right: 0 }}>
+            <div className="relative w-full rounded-2xl overflow-hidden"
+              style={{ aspectRatio: "85.6 / 53.98", background: preset.gradient, border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 8px 24px rgba(0,0,0,0.18)" }}>
+              <div className={preset.patternClass} style={{ position: "absolute", inset: 0, opacity: 0.3 }} />
+              {backContent}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeScreen({ onCreateMaster, onEditIdealSelf }: { onCreateMaster?: () => void; onEditIdealSelf?: () => void }) {
+  const { masterCards, regularCards, getLiveWorkSeconds, deleteRegularCard, reorderRegularCards, completeRegularCard, startWork, stopWork, startBreak, endBreak, getLiveBreakSeconds, updateRegularCard, tick, profile } = useApp();
   const [homeMasterPage, setHomeMasterPage] = useState<"all" | string>("all");
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -1946,6 +2280,13 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
     () => (effectiveHomeMasterPage === "all" ? activeRegular : activeRegular.filter((c) => c.masterId === effectiveHomeMasterPage)),
     [activeRegular, effectiveHomeMasterPage],
   );
+  const stackMasterCards = useMemo(() => {
+    if (effectiveHomeMasterPage === "all") {
+      return homeMasterPages.filter(m => m.status === "active");
+    }
+    const m = masterCards.find(mc => mc.id === effectiveHomeMasterPage && mc.status === "active");
+    return m ? [m] : [];
+  }, [effectiveHomeMasterPage, homeMasterPages, masterCards]);
   const scheduledPending = useMemo(
     () => regularCards.filter((c) => !c.isCompleted && c.isScheduled),
     [regularCards],
@@ -1982,8 +2323,9 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
   const QUEUE_VISIBLE_HEIGHT = 32; // How much of queued cards is visible (상단 정리된 부분)
   
   // Get focused card for detail view
-  const focusedCard = focusedId ? visibleRegular.find(c => c.id === focusedId) : null;
-  const focusedIndex = focusedId ? visibleRegular.findIndex(c => c.id === focusedId) : -1;
+  const focusedIsMaster = focusedId ? stackMasterCards.some(m => m.id === focusedId) : false;
+  const focusedCard = focusedId && !focusedIsMaster ? visibleRegular.find(c => c.id === focusedId) : null;
+  const focusedIndex = focusedId && !focusedIsMaster ? visibleRegular.findIndex(c => c.id === focusedId) : -1;
   const focusedMaster = focusedCard ? (masterCards.find((m) => m.id === focusedCard.masterId) ?? null) : null;
   const focusedMasterName = focusedMaster?.name ?? "";
   const focusedMasterGoalText = focusedMaster?.goalContent?.trim() || "목표 내용을 설정해 주세요";
@@ -2188,6 +2530,7 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
         <div className="px-5 pt-2 pb-1 flex justify-end" style={{ maxWidth: 500, margin: "0 auto" }}>
           <WeeklyHeatmap regularCards={regularCards} />
         </div>
+        {!focusedId ? <IdealSelfHomeCard profile={profile} onEdit={() => onEditIdealSelf?.()} /> : null}
         {!focusedId && yesterdayStats && (
           <div className="mt-3" style={{ maxWidth: 500, margin: "12px auto 0" }}>
             <YesterdayBanner
@@ -2398,6 +2741,7 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
           <WeeklyHeatmap regularCards={regularCards} />
         </div>
       )}
+      {!focusedId && !pendingDeleteId ? <IdealSelfHomeCard profile={profile} onEdit={() => onEditIdealSelf?.()} /> : null}
       {!focusedId && homeMasterPages.length > 0 && (
         <div className="px-5 mb-2" style={{ maxWidth: 500, margin: "0 auto" }}>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -2593,6 +2937,39 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
       {/* Card Stack */}
       <div className={focusedId ? "absolute inset-0 flex justify-center" : "flex justify-center"} style={{ padding: "0 20px" }}>
         <div className="relative w-full" style={{ maxWidth: 460 }}>
+          {/* Master Cards at top of stack */}
+          {stackMasterCards.map((mc, mi) => {
+            const isFocused = focusedId === mc.id;
+            let top: string | number;
+            let zIndex: number;
+            let opacity = 1;
+            let pointerEvents: "auto" | "none" = "auto";
+            if (focusedId) {
+              if (isFocused) {
+                top = FOCUSED_TOP;
+                zIndex = 300;
+              } else {
+                top = `calc(${FOCUSED_TOP}px + (min(100vw, 500px) - 40px) * 0.632 + 150px + ${mi * 12}px)`;
+                zIndex = 100 + mi;
+                opacity = 0.6;
+                pointerEvents = "none";
+              }
+            } else {
+              top = mi * OVERLAP + getHoverOffset(mi);
+              zIndex = mi;
+            }
+            return (
+              <MasterCardInStack
+                key={mc.id}
+                master={mc}
+                style={{ top, zIndex, opacity, pointerEvents, position: "absolute", left: 0, right: 0 }}
+                onClick={() => handleCardClick(mc.id)}
+                isFocused={isFocused}
+                showBack={isFocused && showCardBack}
+                onFlip={() => setShowCardBack(!showCardBack)}
+              />
+            );
+          })}
           {visibleRegular.map((card, i) => {
             const masterName = masterCards.find((m) => m.id === card.masterId)?.name ?? "";
             const isFocused = focusedId === card.id;
@@ -2626,8 +3003,8 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
                 pointerEvents = "none";
               }
             } else {
-              top = i * OVERLAP + hoverOffset;
-              zIndex = i;
+              top = (stackMasterCards.length + i) * OVERLAP + hoverOffset;
+              zIndex = stackMasterCards.length + i;
             }
 
             const isCompleting = completingCardId === card.id;
@@ -2845,9 +3222,14 @@ function HomeScreen({ onCreateMaster }: { onCreateMaster?: () => void }) {
             );
           })}
           {/* Spacer for scrolling */}
-          <div style={{ height: visibleRegular.length * OVERLAP + 240 }} />
+          <div style={{ height: (stackMasterCards.length + visibleRegular.length) * OVERLAP + 240 }} />
         </div>
       </div>
+
+      {/* Backdrop for focused master card */}
+      {focusedId && focusedIsMaster && (
+        <div className="absolute inset-0 z-[250]" onClick={handleBackdropClick} />
+      )}
 
       {/* Focused Card Actions - Between card and queued cards */}
       {focusedId && focusedCard && !completingCardId && (
@@ -4721,10 +5103,35 @@ function DeleteAccountButton({ logout, onClose }: { logout: () => void | Promise
   );
 }
 
-function ProfileModal({ open, onClose, startEditing = false, isWelcome = false }: { open: boolean; onClose: () => void; startEditing?: boolean; isWelcome?: boolean }) {
+function ProfileModal({
+  open,
+  onClose,
+  startEditing = false,
+  isWelcome = false,
+  startIdealEditing = false,
+  onStartIdealEditingConsumed,
+}: {
+  open: boolean;
+  onClose: () => void;
+  startEditing?: boolean;
+  isWelcome?: boolean;
+  startIdealEditing?: boolean;
+  onStartIdealEditingConsumed?: () => void;
+}) {
   const { profile, updateProfile, logout } = useApp();
   if (!open) return null;
-  return <ProfileModalContent profile={profile} updateProfile={updateProfile} logout={logout} onClose={onClose} startEditing={startEditing} isWelcome={isWelcome} />;
+  return (
+    <ProfileModalContent
+      profile={profile}
+      updateProfile={updateProfile}
+      logout={logout}
+      onClose={onClose}
+      startEditing={startEditing}
+      isWelcome={isWelcome}
+      startIdealEditing={startIdealEditing}
+      onStartIdealEditingConsumed={onStartIdealEditingConsumed}
+    />
+  );
 }
 
 function ProfileModalContent({
@@ -4734,6 +5141,8 @@ function ProfileModalContent({
   onClose,
   startEditing = false,
   isWelcome = false,
+  startIdealEditing = false,
+  onStartIdealEditingConsumed,
 }: {
   profile: Profile;
   updateProfile: (p: Partial<Profile>) => void;
@@ -4741,17 +5150,58 @@ function ProfileModalContent({
   onClose: () => void;
   startEditing?: boolean;
   isWelcome?: boolean;
+  startIdealEditing?: boolean;
+  onStartIdealEditingConsumed?: () => void;
 }) {
   const { isAdmin, applyCouponCode, theme, setTheme } = useApp();
   const [editing, setEditing] = useState(startEditing);
+  const [idealEditing, setIdealEditing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [draft, setDraft] = useState(profile);
+  const [traitInput, setTraitInput] = useState("");
   const [couponInput, setCouponInput] = useState("");
   const [settingsMsg, setSettingsMsg] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
 
-  const handleSave = () => { updateProfile(draft); setEditing(false); };
+  useEffect(() => {
+    if (!startIdealEditing) return;
+    setIdealEditing(true);
+    setEditing(false);
+    setShowSettings(false);
+    setDraft(profile);
+    onStartIdealEditingConsumed?.();
+  }, [startIdealEditing, profile, onStartIdealEditingConsumed]);
+
+  const handleSave = () => {
+    updateProfile(draft);
+    setEditing(false);
+  };
+  const handleIdealSave = () => {
+    updateProfile(draft);
+    setIdealEditing(false);
+  };
+  const handleIdealCancel = () => {
+    setDraft(profile);
+    setIdealEditing(false);
+    setTraitInput("");
+  };
+  const addTrait = () => {
+    const t = traitInput.trim();
+    if (!t) return;
+    if (draft.idealTraits.includes(t)) {
+      setTraitInput("");
+      return;
+    }
+    if (draft.idealTraits.length >= 8) return;
+    setDraft({ ...draft, idealTraits: [...draft.idealTraits, t] });
+    setTraitInput("");
+  };
+  const removeTrait = (idx: number) => {
+    setDraft({ ...draft, idealTraits: draft.idealTraits.filter((_, i) => i !== idx) });
+  };
+
   const inputStyle = "rounded-xl py-2.5 px-3.5 w-full text-sm outline-none";
+  const homeIdealVisible = profile.showIdealSelfCard;
 
   return (
     <div className="animate-fadeIn fixed inset-0 z-[600] flex items-end overlay-bg-dark" onClick={onClose}>
@@ -4821,37 +5271,7 @@ function ProfileModalContent({
               <DeleteAccountButton logout={logout} onClose={onClose} />
             </div>
           </>
-        ) : !editing ? (
-          <>
-            <div className="relative rounded-2xl p-6 mb-6 overflow-hidden" style={{ background: "linear-gradient(135deg, #FFFFFF, #F5F5F0)", border: "1px solid var(--border)", boxShadow: "0 4px 16px rgba(0,0,0,0.05)" }}>
-              {/* Settings button - top left */}
-              <button className="btn-press-sm absolute top-3 left-3 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer z-10" style={{ background: "rgba(0,0,0,0.05)", border: "none" }} onClick={() => setShowSettings(true)}>
-                <Settings size={13} style={{ color: "var(--text-faint)" }} />
-              </button>
-              <div className="flex items-start gap-4">
-                <div className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold shrink-0" style={{ background: "var(--gradient-cta)", color: "#FFFFFF", boxShadow: "var(--shadow-cta-sm)" }}>{profile.name?.[0] ?? "N"}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h2 className="text-xl font-bold" style={{ color: "var(--fg)" }}>{profile.name}</h2>
-                    {isAdmin ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0" style={{ color: "#6D28D9", background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.28)" }}>관리자</span>
-                    ) : null}
-                  </div>
-                  <p className="text-sm mt-0.5" style={{ color: "var(--gold-dim)" }}>{profile.job}</p>
-                  <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>{profile.age}</p>
-                </div>
-              </div>
-              <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
-                <p className="text-xs font-semibold mb-1 tracking-wide" style={{ color: "var(--text-faint)" }}>VISION</p>
-                <p className="text-sm" style={{ color: "var(--text-muted)" }}>{profile.vision}</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button className="btn-press flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-semibold text-sm cursor-pointer" onClick={() => { setDraft(profile); setEditing(true); }} style={{ background: "rgba(var(--brand-rgb),0.1)", color: "var(--gold-dim)", border: "1px solid rgba(var(--brand-rgb),0.2)" }}><Edit3 size={16} /> 수정하기</button>
-              <button className="btn-press flex-1 py-3 rounded-xl font-semibold text-sm cursor-pointer" onClick={onClose} style={{ background: "var(--surface-2)", color: "var(--fg)", border: "1px solid var(--border)" }}>닫기</button>
-            </div>
-          </>
-        ) : (
+        ) : editing ? (
           <>
             {isWelcome ? (
               <div className="mb-5">
@@ -4876,6 +5296,209 @@ function ProfileModalContent({
             <div className="flex gap-3">
               <button className="btn-press flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-bold border-none cursor-pointer" onClick={handleSave} style={{ background: "var(--gradient-cta)", color: "#FFFFFF" }}><Check size={16} /> 저장하기</button>
               <button className="btn-press py-3 px-4 rounded-xl font-semibold cursor-pointer text-sm" onClick={isWelcome ? onClose : () => setEditing(false)} style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>{isWelcome ? "건너뛰기" : "취소"}</button>
+            </div>
+          </>
+        ) : idealEditing ? (
+          <>
+            <div className="flex items-center gap-3 mb-5">
+              <button type="button" className="btn-press-sm w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shrink-0" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }} onClick={handleIdealCancel} aria-label="돌아가기">
+                <ChevronLeft size={16} color="var(--fg)" />
+              </button>
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0" style={{ background: draft.avatarColor, boxShadow: `0 4px 14px ${draft.avatarColor}55` }}>
+                <Sparkles size={20} color="#fff" strokeWidth={2.2} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-lg font-bold leading-tight" style={{ color: "var(--fg)" }}>되고 싶은 나 꾸미기</h3>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>홈 카드에 보일 나의 방향을 자유롭게 적어요.</p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-4 mb-5">
+              <div>
+                <label className="text-xs font-semibold mb-2 block tracking-wide" style={{ color: "var(--text-muted)" }}>카드 제목</label>
+                <input
+                  placeholder="예: 차분하지만 단단한 나"
+                  value={draft.idealSelfTitle}
+                  onChange={(e) => setDraft({ ...draft, idealSelfTitle: e.target.value })}
+                  className={inputStyle}
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-2 block tracking-wide" style={{ color: "var(--text-muted)" }}>나의 비전 · 되고 싶은 모습</label>
+                <textarea
+                  placeholder="예: 매일 조금씩 성장하고, 나를 믿는 사람이 되기…"
+                  value={draft.vision}
+                  onChange={(e) => setDraft({ ...draft, vision: e.target.value })}
+                  rows={3}
+                  className={`${inputStyle} resize-none min-h-[88px]`}
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-2 block tracking-wide" style={{ color: "var(--text-muted)" }}>한 줄 다짐</label>
+                <input
+                  placeholder="예: 오늘도 한 걸음만"
+                  value={draft.idealMantra}
+                  onChange={(e) => setDraft({ ...draft, idealMantra: e.target.value })}
+                  className={inputStyle}
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-2 block tracking-wide" style={{ color: "var(--text-muted)" }}>키워드 (최대 8개)</label>
+                <div className="flex gap-2">
+                  <input
+                    placeholder="입력 후 추가"
+                    value={traitInput}
+                    onChange={(e) => setTraitInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addTrait();
+                      }
+                    }}
+                    className={`${inputStyle} flex-1`}
+                    style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }}
+                  />
+                  <button type="button" className="btn-press px-4 rounded-xl text-sm font-bold cursor-pointer shrink-0" style={{ background: "var(--surface-3)", color: "var(--fg)", border: "1px solid var(--border)" }} onClick={addTrait}>
+                    추가
+                  </button>
+                </div>
+                {draft.idealTraits.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {draft.idealTraits.map((t, i) => (
+                      <button
+                        key={`${t}-${i}`}
+                        type="button"
+                        className="btn-press-sm text-[11px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer flex items-center gap-1"
+                        style={{ background: "rgba(var(--brand-rgb),0.12)", color: "var(--gold-dim)", border: "1px solid rgba(var(--brand-rgb),0.25)" }}
+                        onClick={() => removeTrait(i)}
+                      >
+                        {t}
+                        <X size={12} strokeWidth={2.5} />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-2 block tracking-wide" style={{ color: "var(--text-muted)" }}>카드 색상</label>
+                <div className="flex flex-wrap gap-2">
+                  {IDEAL_ACCENT_SWATCHES.map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      className="btn-press-sm w-9 h-9 rounded-full cursor-pointer shrink-0 border-2"
+                      style={{
+                        background: hex,
+                        borderColor: draft.avatarColor === hex ? "var(--fg)" : "transparent",
+                        boxShadow: draft.avatarColor === hex ? `0 0 0 2px ${hex}` : "none",
+                      }}
+                      onClick={() => setDraft({ ...draft, avatarColor: hex })}
+                      aria-label={`색 ${hex}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button type="button" className="btn-press flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-bold border-none cursor-pointer" onClick={handleIdealSave} style={{ background: "var(--gradient-cta)", color: "#FFFFFF" }}>
+                <Check size={16} /> 저장하기
+              </button>
+              <button type="button" className="btn-press py-3 px-4 rounded-xl font-semibold cursor-pointer text-sm" onClick={handleIdealCancel} style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                취소
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="relative rounded-2xl p-6 mb-4 overflow-hidden" style={{ background: "linear-gradient(135deg, #FFFFFF, #F5F5F0)", border: "1px solid var(--border)", boxShadow: "0 4px 16px rgba(0,0,0,0.05)" }}>
+              <button className="btn-press-sm absolute top-3 left-3 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer z-10" style={{ background: "rgba(0,0,0,0.05)", border: "none" }} onClick={() => setShowSettings(true)}>
+                <Settings size={13} style={{ color: "var(--text-faint)" }} />
+              </button>
+              <div className="flex items-start gap-4">
+                <div
+                  className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold shrink-0"
+                  style={{ background: profile.avatarColor, color: "#FFFFFF", boxShadow: `0 6px 18px ${profile.avatarColor}55` }}
+                >
+                  {profile.name?.[0] ?? "N"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-xl font-bold" style={{ color: "var(--fg)" }}>{profile.name}</h2>
+                    {isAdmin ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0" style={{ color: "#6D28D9", background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.28)" }}>관리자</span>
+                    ) : null}
+                  </div>
+                  {profile.idealSelfTitle.trim() ? (
+                    <p className="text-xs font-semibold mt-1" style={{ color: "var(--gold-dim)" }}>{profile.idealSelfTitle}</p>
+                  ) : null}
+                  <p className="text-sm mt-0.5" style={{ color: "var(--gold-dim)" }}>{profile.job}</p>
+                  <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>{profile.age}</p>
+                </div>
+              </div>
+              <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
+                <p className="text-xs font-semibold mb-1 tracking-wide" style={{ color: "var(--text-faint)" }}>나의 비전</p>
+                <p className="text-sm" style={{ color: "var(--text-muted)" }}>{profile.vision}</p>
+                {profile.idealMantra.trim() ? (
+                  <p className="text-xs mt-2 italic font-medium" style={{ color: "var(--gold-dim)" }}>&ldquo;{profile.idealMantra}&rdquo;</p>
+                ) : null}
+                {profile.idealTraits.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mt-2.5">
+                    {profile.idealTraits.map((t, i) => (
+                      <span
+                        key={`${t}-${i}`}
+                        className="text-[11px] font-semibold px-2 py-0.5 rounded-lg"
+                        style={{ background: "rgba(var(--brand-rgb),0.1)", color: "var(--gold-dim)", border: "1px solid rgba(var(--brand-rgb),0.22)" }}
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn-press w-full py-3.5 rounded-xl flex items-center gap-3 px-4 cursor-pointer mb-2"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+              onClick={() => updateProfile({ showIdealSelfCard: !homeIdealVisible })}
+            >
+              <Sparkles size={18} style={{ color: "var(--text-muted)" }} />
+              <span className="text-sm font-semibold flex-1 text-left" style={{ color: "var(--fg)" }}>홈에서 되고 싶은 나 카드 보이기</span>
+              <div className="w-10 h-5 rounded-full relative shrink-0 transition-colors" style={{ background: homeIdealVisible ? "var(--gradient-cta)" : "var(--surface-3)" }}>
+                <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all" style={{ left: homeIdealVisible ? "calc(100% - 18px)" : "2px" }} />
+              </div>
+            </button>
+            <button
+              type="button"
+              className="btn-press w-full py-3.5 rounded-xl flex items-center gap-3 px-4 cursor-pointer mb-6"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+              onClick={() => {
+                setDraft(profile);
+                setTraitInput("");
+                setIdealEditing(true);
+              }}
+            >
+              <Edit3 size={18} style={{ color: "var(--text-muted)" }} />
+              <span className="text-sm font-semibold flex-1 text-left" style={{ color: "var(--fg)" }}>되고 싶은 나 편집</span>
+              <ChevronRight size={18} style={{ color: "var(--text-faint)" }} className="shrink-0" />
+            </button>
+            <div className="flex gap-3">
+              <button
+                className="btn-press flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-semibold text-sm cursor-pointer"
+                onClick={() => {
+                  setDraft(profile);
+                  setIdealEditing(false);
+                  setEditing(true);
+                }}
+                style={{ background: "rgba(var(--brand-rgb),0.1)", color: "var(--gold-dim)", border: "1px solid rgba(var(--brand-rgb),0.2)" }}
+              >
+                <Edit3 size={16} /> 기본 프로필 수정
+              </button>
+              <button className="btn-press flex-1 py-3 rounded-xl font-semibold text-sm cursor-pointer" onClick={onClose} style={{ background: "var(--surface-2)", color: "var(--fg)", border: "1px solid var(--border)" }}>
+                닫기
+              </button>
             </div>
           </>
         )}
@@ -5029,6 +5652,7 @@ function AppShell() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileIsWelcome, setProfileIsWelcome] = useState(false);
   const [profileSetupAutoOpenUsed, setProfileSetupAutoOpenUsed] = useState(false);
+  const [profileIdealEditOnOpen, setProfileIdealEditOnOpen] = useState(false);
 
   const todayActiveCount = useMemo(() => {
     void tick;
@@ -5106,7 +5730,15 @@ function AppShell() {
               관리자
             </span>
           ) : null}
-          <button className="btn-press-sm relative w-11 h-11 rounded-full flex items-center justify-center text-base font-bold border-none cursor-pointer" onClick={() => { setProfileIsWelcome(false); setProfileOpen(true); }} style={{ background: "var(--gradient-cta)", color: "#FFFFFF", boxShadow: "var(--shadow-cta-sm)" }}>
+          <button
+            className="btn-press-sm relative w-11 h-11 rounded-full flex items-center justify-center text-base font-bold border-none cursor-pointer"
+            onClick={() => {
+              setProfileIsWelcome(false);
+              setProfileIdealEditOnOpen(false);
+              setProfileOpen(true);
+            }}
+            style={{ background: profile.avatarColor, color: "#FFFFFF", boxShadow: `0 4px 14px ${profile.avatarColor}55` }}
+          >
             {profile.name?.[0] ?? "N"}
             {isAdmin ? (
               <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white" style={{ background: "#7C3AED" }}>
@@ -5123,6 +5755,11 @@ function AppShell() {
             onCreateMaster={() => {
               setCreateInitialType("master");
               setCreateOpen(true);
+            }}
+            onEditIdealSelf={() => {
+              setProfileIsWelcome(false);
+              setProfileIdealEditOnOpen(true);
+              setProfileOpen(true);
             }}
           />
         )}
@@ -5188,7 +5825,18 @@ function AppShell() {
         }}
         initialType={createInitialType}
       />
-      <ProfileModal open={profileOpen} onClose={() => { setProfileOpen(false); setProfileIsWelcome(false); }} startEditing={profileIsWelcome} isWelcome={profileIsWelcome} />
+      <ProfileModal
+        open={profileOpen}
+        onClose={() => {
+          setProfileOpen(false);
+          setProfileIsWelcome(false);
+          setProfileIdealEditOnOpen(false);
+        }}
+        startEditing={profileIsWelcome}
+        isWelcome={profileIsWelcome}
+        startIdealEditing={profileIdealEditOnOpen}
+        onStartIdealEditingConsumed={() => setProfileIdealEditOnOpen(false)}
+      />
     </div>
   );
 }
