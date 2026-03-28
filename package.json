@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 127.0.0.1 -p 3003",
-    "dev:lan": "next dev -H 0.0.0.0 -p 3003",
+    "dev": "WATCHPACK_POLLING=true next dev -H 127.0.0.1 -p 3003 --webpack",
+    "dev:lan": "WATCHPACK_POLLING=true next dev -H 0.0.0.0 -p 3003 --webpack",
+    "dev:turbo": "next dev -H 127.0.0.1 -p 3003",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

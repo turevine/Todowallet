@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
-import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, BookOpen, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2, Moon, Sun, BarChart2, Zap, Sparkles } from "lucide-react";
+import { Home, Archive, Plus, X, Play, Square, Pause, Coffee, Crown, CreditCard, Target, ChevronRight, Edit3, Check, ToggleLeft, ToggleRight, Info, ChevronLeft, GripVertical, Trash2, Settings, LogOut, UserX, Shield, LayoutGrid, CalendarClock, RotateCcw, Mail, Lock, Loader2, Moon, Sun, BarChart2, Zap, Sparkles, Flame } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { getSupabase, isSupabaseConfigured, setSupabaseRuntimeConfig } from "@/lib/supabase/client";
 
@@ -222,14 +222,19 @@ interface RegularCard {
   presetId?: string;
 }
 
-interface RecipeCard {
+interface HabitCard {
   id: string;
-  type: "recipe";
+  type: "habit";
   name: string;
   masterId: string;
   designPresetId: string;
   createdAt: string;
   content?: string;
+  goalDays: number;
+  completedDates: string[];
+  status: "active" | "gold" | "silver";
+  goldAchievedAt?: string;
+  lastCompletedDate?: string;
 }
 
 interface PresetCard {
@@ -241,7 +246,45 @@ interface PresetCard {
   createdAt: string;
 }
 
-type Card = MasterCard | RegularCard | RecipeCard | PresetCard;
+type Card = MasterCard | RegularCard | HabitCard | PresetCard;
+
+// 습관카드 스트릭 헬퍼
+function getHabitStreak(completedDates: string[]): number {
+  if (!completedDates.length) return 0;
+  const sorted = [...completedDates].sort().reverse();
+  const today = new Date().toISOString().split("T")[0];
+  let streak = 0;
+  const startDate = sorted[0] === today ? today : null;
+  if (!startDate) return 0;
+  const dateSet = new Set(sorted);
+  const d = new Date(today);
+  while (dateSet.has(d.toISOString().split("T")[0])) {
+    streak++;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+
+function getHabitAbsenceDays(lastCompletedDate?: string): number {
+  if (!lastCompletedDate) return 0;
+  const last = new Date(lastCompletedDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  last.setHours(0, 0, 0, 0);
+  const diff = Math.floor((today.getTime() - last.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.max(0, diff - 1); // 마지막 완료일 다음날부터 카운트
+}
+
+function getAbsenceColor(days: number): string {
+  if (days <= 0) return "transparent";
+  if (days === 1) return "rgba(255,255,255,0.4)";
+  if (days === 2) return "#FCD34D";
+  if (days === 3) return "#FBBF24";
+  if (days === 4) return "#F59E0B";
+  if (days === 5) return "#EA580C";
+  if (days === 6) return "#DC2626";
+  return "#B91C1C";
+}
 
 interface AppState {
   /** Supabase 세션 확인 전에는 false — 로그인 화면 깜빡임 방지 */
@@ -251,7 +294,7 @@ interface AppState {
   masterCards: MasterCard[];
   presetCards: PresetCard[];
   regularCards: RegularCard[];
-  recipeCards: RecipeCard[];
+  habitCards: HabitCard[];
   activeTab: "home" | "vault";
   tick: number;
   isAdmin: boolean;
@@ -270,12 +313,13 @@ interface AppContextType extends AppState {
   ) => void;
   addRegularCard: (card: Omit<RegularCard, "id" | "createdAt" | "date" | "sessions" | "totalWorkSeconds" | "totalBreakSeconds" | "isWorking" | "isPaused" | "currentSessionStart" | "currentBreakStart" | "isCompleted" | "completedAt"> & { date?: string }) => RegularCard;
   addPresetCard: (card: Omit<PresetCard, "id" | "createdAt">) => PresetCard;
-  addRecipeCard: (card: Omit<RecipeCard, "id" | "createdAt">) => RecipeCard;
+  addHabitCard: (card: Omit<HabitCard, "id" | "createdAt" | "completedDates" | "status">) => HabitCard;
+  toggleHabitDate: (id: string, date: string) => void;
   updateRegularCard: (id: string, updates: Partial<RegularCard>) => void;
   deleteRegularCard: (id: string) => void;
   deleteMasterCard: (id: string) => void;
   deletePresetCard: (id: string) => void;
-  deleteRecipeCard: (id: string) => void;
+  deleteHabitCard: (id: string) => void;
   reorderRegularCards: (ids: string[]) => void;
   completeRegularCard: (id: string) => void;
   /** 방금 완료한 카드 5초 내 실행 취소 (홈에서 완료 시) */
@@ -353,7 +397,7 @@ const isDefaultProfile = (profile: Profile) =>
   (profile.age ?? "").trim() === DEFAULT_PROFILE.age &&
   isVisionUnset(profile.vision);
 
-type SyncedAppState = Pick<AppState, "profile" | "masterCards" | "presetCards" | "regularCards" | "recipeCards" | "redeemedCouponIds"> & {
+type SyncedAppState = Pick<AppState, "profile" | "masterCards" | "presetCards" | "regularCards" | "habitCards" | "redeemedCouponIds"> & {
   checklistByCard: Record<string, ChecklistItem[]>;
 };
 
@@ -426,7 +470,10 @@ function normalizeSyncedState(raw: unknown): SyncedAppState | null {
     masterCards: Array.isArray(obj.masterCards) ? obj.masterCards : [],
     presetCards: Array.isArray(obj.presetCards) ? obj.presetCards : [],
     regularCards: Array.isArray(obj.regularCards) ? obj.regularCards : [],
-    recipeCards: Array.isArray(obj.recipeCards) ? obj.recipeCards : [],
+    habitCards: Array.isArray(obj.habitCards) ? (obj.habitCards as HabitCard[]).map((h) => ({ ...h, type: "habit" as const, goalDays: h.goalDays || 90, completedDates: h.completedDates || [], status: h.status || "active" } as HabitCard))
+      : Array.isArray((obj as Record<string, unknown>).recipeCards)
+        ? ((obj as Record<string, unknown>).recipeCards as HabitCard[]).map((r) => ({ ...r, type: "habit" as const, goalDays: 90, completedDates: [], status: "active" as const } as HabitCard))
+        : [],
     redeemedCouponIds: Array.isArray(obj.redeemedCouponIds)
       ? obj.redeemedCouponIds.map((x) => String(x))
       : [],
@@ -447,7 +494,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         masterCards: [],
         presetCards: [],
         regularCards: [],
-        recipeCards: [],
+        habitCards: [],
         activeTab: "home",
         tick: 0,
         isAdmin: false,
@@ -463,7 +510,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       masterCards: saved.masterCards ?? [],
       presetCards: saved.presetCards ?? [],
       regularCards: saved.regularCards ?? [],
-      recipeCards: saved.recipeCards ?? [],
+      habitCards: saved.habitCards ?? [],
       activeTab: "home",
       tick: 0,
       isAdmin: false,
@@ -495,8 +542,25 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, []);
 
+  // 습관카드 강등 체크: 골드 상태에서 7일 연속 불참 시 실버로 강등
+  useEffect(() => {
+    const { habitCards: hCards } = state;
+    const needsDemotion = hCards.filter((h) => h.status === "gold" && getHabitAbsenceDays(h.lastCompletedDate) >= 7);
+    if (needsDemotion.length > 0) {
+      setState((prev) => ({
+        ...prev,
+        habitCards: prev.habitCards.map((h) =>
+          h.status === "gold" && getHabitAbsenceDays(h.lastCompletedDate) >= 7
+            ? { ...h, status: "silver" as const }
+            : h
+        ),
+      }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // localStorage 저장: tick/activeTab 등 제외, 실제 데이터가 바뀔 때만 실행
-  const { profile: stProfile, masterCards: stMaster, presetCards: stPreset, regularCards: stRegular, recipeCards: stRecipe, redeemedCouponIds: stCoupons } = state;
+  const { profile: stProfile, masterCards: stMaster, presetCards: stPreset, regularCards: stRegular, habitCards: stHabit, redeemedCouponIds: stCoupons } = state;
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -504,12 +568,12 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         masterCards: stMaster,
         presetCards: stPreset,
         regularCards: stRegular,
-        recipeCards: stRecipe,
+        habitCards: stHabit,
         redeemedCouponIds: stCoupons,
         checklistByCard: readChecklistMapFromLocalStorage(),
       }));
     } catch {}
-  }, [stProfile, stMaster, stPreset, stRegular, stRecipe, stCoupons]);
+  }, [stProfile, stMaster, stPreset, stRegular, stHabit, stCoupons]);
 
   useEffect(() => {
     let cancelled = false;
@@ -659,7 +723,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       masterCards: stMaster,
       presetCards: stPreset,
       regularCards: stRegular,
-      recipeCards: stRecipe,
+      habitCards: stHabit,
       redeemedCouponIds: stCoupons,
       checklistByCard: readChecklistMapFromLocalStorage(),
     };
@@ -686,7 +750,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         clearTimeout(cloudSaveTimerRef.current);
       }
     };
-  }, [authReady, isLoggedIn, stProfile, stMaster, stPreset, stRegular, stRecipe, stCoupons, checklistSyncTick]);
+  }, [authReady, isLoggedIn, stProfile, stMaster, stPreset, stRegular, stHabit, stCoupons, checklistSyncTick]);
 
   const update = useCallback((updater: (s: AppState) => Partial<AppState>) => setState((s) => ({ ...s, ...updater(s) })), []);
 
@@ -801,10 +865,26 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       update((s) => ({ regularCards: [...s.regularCards, newCard] }));
       return newCard;
     },
-    addRecipeCard: (card) => {
-      const newCard: RecipeCard = { ...card, id: generateId(), createdAt: new Date().toISOString() };
-      update((s) => ({ recipeCards: [...s.recipeCards, newCard] }));
+    addHabitCard: (card) => {
+      const newCard: HabitCard = { ...card, id: generateId(), createdAt: new Date().toISOString(), completedDates: [], status: "active" };
+      update((s) => ({ habitCards: [...s.habitCards, newCard] }));
       return newCard;
+    },
+    toggleHabitDate: (id, date) => {
+      update((s) => ({
+        habitCards: s.habitCards.map((h) => {
+          if (h.id !== id) return h;
+          const has = h.completedDates.includes(date);
+          const newDates = has ? h.completedDates.filter((d) => d !== date) : [...h.completedDates, date];
+          const lastDate = newDates.length ? newDates.sort().reverse()[0] : h.lastCompletedDate;
+          const pct = (newDates.length / h.goalDays) * 100;
+          let newStatus = h.status;
+          if (h.status === "active" && pct >= 70) {
+            newStatus = "gold";
+          }
+          return { ...h, completedDates: newDates, lastCompletedDate: lastDate, status: newStatus, ...(newStatus === "gold" && h.status !== "gold" ? { goldAchievedAt: new Date().toISOString() } : {}) };
+        }),
+      }));
     },
     addPresetCard: (card) => {
       const newCard: PresetCard = { ...card, id: generateId(), createdAt: new Date().toISOString() };
@@ -826,7 +906,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         masterCards: s.masterCards.filter((c) => c.id !== id),
         regularCards: s.regularCards.filter((c) => c.masterId !== id),
         presetCards: s.presetCards.filter((c) => c.masterId !== id),
-        recipeCards: s.recipeCards.filter((c) => c.masterId !== id),
+        habitCards: s.habitCards.filter((c) => c.masterId !== id),
       }));
     },
     deletePresetCard: (id) => {
@@ -834,9 +914,9 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         presetCards: s.presetCards.filter((c) => c.id !== id),
       }));
     },
-    deleteRecipeCard: (id) => {
+    deleteHabitCard: (id) => {
       update((s) => ({
-        recipeCards: s.recipeCards.filter((c) => c.id !== id),
+        habitCards: s.habitCards.filter((c) => c.id !== id),
       }));
     },
     reorderRegularCards: (ids) => {
@@ -1233,9 +1313,16 @@ function CardStackItem({ card, masterName, liveSeconds, isFocused }: CardStackIt
   const preset = getPreset(card.designPresetId);
   const isMaster = card.type === "master";
   const isRegular = card.type === "regular";
+  const isHabit = card.type === "habit";
   const masterStatus = isMaster ? (card as MasterCard).status : null;
   const regularCard = isRegular ? (card as RegularCard) : null;
+  const habitCard = isHabit ? (card as HabitCard) : null;
   const showElapsed = (liveSeconds || 0) >= 60;
+
+  const habitStreak = habitCard ? getHabitStreak(habitCard.completedDates) : 0;
+  const habitAbsence = habitCard ? getHabitAbsenceDays(habitCard.lastCompletedDate) : 0;
+  const absenceColor = getAbsenceColor(habitAbsence);
+  const habitBadgeStatus = habitCard?.status;
 
   return (
     <div className={isFocused ? "" : "btn-press"}
@@ -1243,6 +1330,8 @@ function CardStackItem({ card, masterName, liveSeconds, isFocused }: CardStackIt
       <div className={preset.patternClass} style={{ position: "absolute", inset: 0, opacity: 0.3, pointerEvents: "none" }} />
       {masterStatus === "gold" && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: GOLD_METAL_RIBBON, boxShadow: "0 1px 3px rgba(0,0,0,0.35)" }} />}
       {masterStatus === "silver" && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: SILVER_METAL_RIBBON, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />}
+      {habitBadgeStatus === "gold" && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: GOLD_METAL_RIBBON, boxShadow: "0 1px 3px rgba(0,0,0,0.35)" }} />}
+      {habitBadgeStatus === "silver" && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: SILVER_METAL_RIBBON, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />}
       {preset.limited && <div style={{ position: "absolute", top: 8, right: 10, padding: "2px 8px", borderRadius: 99, fontSize: 10, fontWeight: 700, background: "var(--gradient-badge)", color: "#0A0A0A" }}>{preset.limited}</div>}
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "7px 14px 11px" }}>
         <div style={{ minHeight: 0 }}>
@@ -1268,10 +1357,23 @@ function CardStackItem({ card, masterName, liveSeconds, isFocused }: CardStackIt
                   {masterStatus === "gold" ? "GOLD" : masterStatus === "silver" ? "SILVER" : "MASTER"}
                 </span>
               </>
+            ) : isHabit ? (
+              <>
+                <span />
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  color: habitBadgeStatus === "gold" ? GOLD_BADGE_COLOR : habitBadgeStatus === "silver" ? SILVER_BADGE_COLOR : "rgba(255,255,255,0.5)",
+                  textShadow: habitBadgeStatus === "gold" ? GOLD_BADGE_SHADOW : habitBadgeStatus === "silver" ? SILVER_BADGE_SHADOW : undefined,
+                }}>
+                  {habitBadgeStatus === "gold" ? "GOLD" : habitBadgeStatus === "silver" ? "SILVER" : "HABIT"}
+                </span>
+              </>
             ) : (
               <>
                 <span />
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>{masterName || (card.type === "recipe" ? "RECIPE" : "")}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>{masterName || ""}</span>
               </>
             )}
           </div>
@@ -1279,6 +1381,17 @@ function CardStackItem({ card, masterName, liveSeconds, isFocused }: CardStackIt
           {(isMaster || isRegular) && showElapsed && (
             <div className="font-mono tabular-nums" style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.78)", marginTop: 3, letterSpacing: "0.02em", textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>
               {formatSeconds(liveSeconds || 0)}
+            </div>
+          )}
+          {isHabit && habitStreak > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 3 }}>
+              <Flame size={12} color="#22C55E" />
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#22C55E", textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{habitStreak}일 연속!</span>
+            </div>
+          )}
+          {isHabit && habitStreak === 0 && habitAbsence > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 3 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: absenceColor, textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{habitAbsence}일 불참</span>
             </div>
           )}
         </div>
@@ -1290,6 +1403,11 @@ function CardStackItem({ card, masterName, liveSeconds, isFocused }: CardStackIt
               <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
                 <div className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#22C55E" }} />
                 <span style={{ fontSize: 11, color: "#22C55E" }}>진행중</span>
+              </div>
+            )}
+            {isHabit && habitCard && (
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>
+                {habitCard.completedDates.length}/{habitCard.goalDays}일
               </div>
             )}
           </div>
@@ -1507,7 +1625,7 @@ function CardManagementSheet({
   onReorder: () => void;
   onScheduled: () => void;
 }) {
-  const { masterCards, regularCards, recipeCards, presetCards, deleteRegularCard, deleteMasterCard, deletePresetCard, deleteRecipeCard } = useApp();
+  const { masterCards, regularCards, habitCards, presetCards, deleteRegularCard, deleteMasterCard, deletePresetCard, deleteHabitCard } = useApp();
   const [deleteMode, setDeleteMode] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
@@ -1517,14 +1635,14 @@ function CardManagementSheet({
     ...masterCards.map((c) => ({ ...c, _kind: "master" as const, _label: "마스터" })),
     ...regularCards.filter((c) => !c.isCompleted).map((c) => ({ ...c, _kind: "regular" as const, _label: "일반" })),
     ...presetCards.map((c) => ({ ...c, _kind: "preset" as const, _label: "프리셋" })),
-    ...recipeCards.map((c) => ({ ...c, _kind: "recipe" as const, _label: "레시피" })),
+    ...habitCards.map((c) => ({ ...c, _kind: "habit" as const, _label: "습관" })),
   ];
 
   const handleDelete = (card: (typeof allCards)[number]) => {
     if (card._kind === "master") deleteMasterCard(card.id);
     else if (card._kind === "regular") deleteRegularCard(card.id);
     else if (card._kind === "preset") deletePresetCard(card.id);
-    else deleteRecipeCard(card.id);
+    else deleteHabitCard(card.id);
     setConfirmId(null);
     if (allCards.length <= 1) setDeleteMode(false);
   };
@@ -3463,7 +3581,7 @@ function HomeScreen({ onCreateMaster, onEditIdealSelf }: { onCreateMaster?: () =
 // ═══════════════════════════════════════════
 
 function GalleryView({ masterId, onClose }: { masterId: string; onClose: () => void }) {
-  const { masterCards, presetCards, regularCards, recipeCards, revertRegularCompletion, setActiveTab } = useApp();
+  const { masterCards, presetCards, regularCards, habitCards, revertRegularCompletion, setActiveTab, toggleHabitDate } = useApp();
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [showBack, setShowBack] = useState(false);
@@ -3473,7 +3591,7 @@ function GalleryView({ masterId, onClose }: { masterId: string; onClose: () => v
   if (!selected) return null;
 
   const masterPresets = presetCards.filter((p) => p.masterId === masterId);
-  const cards = [...regularCards.filter((r) => r.masterId === masterId), ...recipeCards.filter((r) => r.masterId === masterId)]
+  const cards = [...regularCards.filter((r) => r.masterId === masterId), ...habitCards.filter((r) => r.masterId === masterId)]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const presetCardsChildren = selectedPresetId
     ? regularCards.filter((r) => r.masterId === masterId && r.presetId === selectedPresetId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -3481,7 +3599,7 @@ function GalleryView({ masterId, onClose }: { masterId: string; onClose: () => v
 
   const detailCard = selectedCardId ? cards.find(c => c.id === selectedCardId) : null;
   const detailRegular = detailCard?.type === "regular" ? detailCard as RegularCard : null;
-  const detailRecipe = detailCard?.type === "recipe" ? detailCard as RecipeCard : null;
+  const detailHabit = detailCard?.type === "habit" ? detailCard as HabitCard : null;
 
   // Load checklist from localStorage
   const getChecklist = (cardId: string) => {
@@ -3511,30 +3629,100 @@ function GalleryView({ masterId, onClose }: { masterId: string; onClose: () => v
               <ChevronLeft size={18} /> 목록으로
             </button>
           </div>
-          {detailRecipe ? (
+          {detailHabit ? (() => {
+            const hStreak = getHabitStreak(detailHabit.completedDates);
+            const hAbsence = getHabitAbsenceDays(detailHabit.lastCompletedDate);
+            const hPct = Math.round((detailHabit.completedDates.length / detailHabit.goalDays) * 100);
+            const hTodayStr = new Date().toISOString().split("T")[0];
+            const hCheckedToday = detailHabit.completedDates.includes(hTodayStr);
+            // 최근 14일 히트맵
+            const heatmapDays: { date: string; done: boolean }[] = [];
+            for (let i = 13; i >= 0; i--) {
+              const d = new Date();
+              d.setDate(d.getDate() - i);
+              const ds = d.toISOString().split("T")[0];
+              heatmapDays.push({ date: ds, done: detailHabit.completedDates.includes(ds) });
+            }
+            return (
             <>
               <div style={{ marginBottom: 16 }}>
                 <div className="relative w-full rounded-2xl overflow-hidden" style={{ aspectRatio: "85.6 / 53.98", background: cp.gradient, border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 12px 40px rgba(0,0,0,0.15)" }}>
+                  {detailHabit.status === "gold" && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: GOLD_METAL_RIBBON, boxShadow: "0 1px 3px rgba(0,0,0,0.35)", zIndex: 2 }} />}
+                  {detailHabit.status === "silver" && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 5, background: SILVER_METAL_RIBBON, boxShadow: "0 1px 3px rgba(0,0,0,0.3)", zIndex: 2 }} />}
                   <div className={cp.patternClass} style={{ position: "absolute", inset: 0, opacity: 0.3 }} />
                   <div className="absolute inset-0 flex flex-col justify-between" style={{ padding: "10px 14px 12px" }}>
                     <div>
-                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>RECIPE</span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, letterSpacing: "0.1em",
+                        color: detailHabit.status === "gold" ? GOLD_BADGE_COLOR : detailHabit.status === "silver" ? SILVER_BADGE_COLOR : "rgba(255,255,255,0.5)",
+                        textShadow: detailHabit.status === "gold" ? GOLD_BADGE_SHADOW : detailHabit.status === "silver" ? SILVER_BADGE_SHADOW : undefined,
+                      }}>{detailHabit.status === "gold" ? "GOLD" : detailHabit.status === "silver" ? "SILVER" : "HABIT"}</span>
                       <div style={{ fontSize: 16, fontWeight: 700, color: cp.textColor, marginTop: 2, lineHeight: 1.2 }}>{detailCard.name}</div>
+                      {hStreak > 0 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 4 }}>
+                          <Flame size={13} color="#22C55E" />
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "#22C55E" }}>{hStreak}일 연속!</span>
+                        </div>
+                      )}
+                      {hStreak === 0 && hAbsence > 0 && (
+                        <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: getAbsenceColor(hAbsence) }}>{hAbsence}일 불참</div>
+                      )}
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                       <div className="font-mono" style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{new Date(detailCard.createdAt).toLocaleDateString("ko-KR")}</div>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>레시피</span>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>{detailHabit.completedDates.length}/{detailHabit.goalDays}일</span>
                     </div>
                   </div>
                 </div>
               </div>
-              <p className="text-center text-xs mb-4" style={{ color: "var(--text-faint)" }}>설명은 아래 패널에 표시됩니다</p>
-              <div className="rounded-2xl p-4" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
-                <p className="text-xs font-bold tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>레시피 · 설명</p>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "var(--fg)" }}>{detailRecipe.content?.trim() ? detailRecipe.content : "작성된 설명이 없습니다."}</p>
+
+              {/* 진행률 */}
+              <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-bold tracking-wide" style={{ color: "var(--text-muted)" }}>진행률</p>
+                  <span className="text-xs font-bold" style={{ color: hPct >= 70 ? "#22C55E" : "var(--fg)" }}>{hPct}%</span>
+                </div>
+                <div style={{ width: "100%", height: 8, borderRadius: 4, background: "var(--surface-2)", overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, hPct)}%`, height: "100%", borderRadius: 4, background: hPct >= 70 ? "linear-gradient(90deg, #22C55E, #16A34A)" : "var(--gradient-cta)", transition: "width 0.3s" }} />
+                </div>
+                <p className="text-[11px] mt-2" style={{ color: "var(--text-faint)" }}>{detailHabit.completedDates.length}일 완료 / {detailHabit.goalDays}일 목표 {hPct < 70 ? `(골드까지 ${Math.ceil(detailHabit.goalDays * 0.7) - detailHabit.completedDates.length}일 더!)` : ""}</p>
               </div>
+
+              {/* 오늘 체크 */}
+              <button
+                className="btn-press w-full py-3.5 rounded-2xl font-bold text-base mb-3 border-none cursor-pointer"
+                style={{
+                  background: hCheckedToday ? "var(--surface-2)" : "var(--gradient-cta)",
+                  color: hCheckedToday ? "var(--text-muted)" : "#FFFFFF",
+                  boxShadow: hCheckedToday ? "none" : "var(--shadow-cta)",
+                }}
+                onClick={() => toggleHabitDate(detailHabit.id, hTodayStr)}
+              >
+                {hCheckedToday ? "오늘 체크 취소" : "오늘 완료!"}
+              </button>
+
+              {/* 최근 14일 히트맵 */}
+              <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+                <p className="text-xs font-bold tracking-wide mb-3" style={{ color: "var(--text-muted)" }}>최근 14일</p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                  {heatmapDays.map((day) => (
+                    <div key={day.date} style={{ aspectRatio: "1", borderRadius: 6, background: day.done ? "#22C55E" : "var(--surface-2)", border: day.date === hTodayStr ? "2px solid var(--fg)" : "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ fontSize: 8, color: day.done ? "#fff" : "var(--text-faint)", fontWeight: 600 }}>{new Date(day.date).getDate()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 설명 */}
+              {detailHabit.content?.trim() && (
+                <div className="rounded-2xl p-4" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+                  <p className="text-xs font-bold tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>습관 · 설명</p>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "var(--fg)" }}>{detailHabit.content}</p>
+                </div>
+              )}
             </>
-          ) : (
+            );
+          })() : (
             <>
               <div style={{ perspective: "1000px", marginBottom: 16 }} onClick={() => setShowBack(!showBack)}>
                 <div style={{ transformStyle: "preserve-3d", transition: "transform 0.6s cubic-bezier(0.4,0,0.2,1)", transform: showBack ? "rotateY(180deg)" : "rotateY(0deg)" }}>
@@ -3720,7 +3908,7 @@ function GalleryView({ masterId, onClose }: { masterId: string; onClose: () => v
                 <div className="relative w-full rounded-lg overflow-hidden" style={{ aspectRatio: "85.6 / 53.98", background: cp.gradient, border: "1px solid rgba(255,255,255,0.15)" }}>
                   <div className={cp.patternClass} style={{ position: "absolute", inset: 0, opacity: 0.32 }} />
                   <div className="absolute inset-0 p-2.5 flex flex-col justify-between">
-                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>{c.type === "recipe" ? "RECIPE" : "CARD"}</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>{c.type === "habit" ? "HABIT" : "CARD"}</span>
                     <div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: cp.textColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
                       {c.type === "regular" && workSecs > 0 && <div className="font-mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{formatSeconds(workSecs)}</div>}
@@ -3946,8 +4134,8 @@ function GoldCelebrationOverlay({ data, onClose }: { data: GoldCelebData; onClos
 // ═══════════════════════════════════════════
 
 function VaultScreen() {
-  const { masterCards, regularCards, recipeCards, setMasterStatus, updateMasterCard } = useApp();
-  const [masterLane, setMasterLane] = useState<"general" | "recipe">("general");
+  const { masterCards, regularCards, habitCards, setMasterStatus, updateMasterCard } = useApp();
+  const [masterLane, setMasterLane] = useState<"general" | "habit">("general");
   const [filter, setFilter] = useState<"active" | "gold" | "silver">("active");
   const [focusedMasterId, setFocusedMasterId] = useState<string | null>(null);
   const [galleryMasterId, setGalleryMasterId] = useState<string | null>(null);
@@ -3970,7 +4158,7 @@ function VaultScreen() {
   }
 
   const filteredMasters = masterCards.filter((m) => {
-    const category = (m as MasterCard & { masterCategory?: "general" | "recipe" }).masterCategory ?? "general";
+    const category = (m as MasterCard & { masterCategory?: "general" | "habit" }).masterCategory ?? "general";
     if (category !== masterLane) return false;
     if (filter === "active") return m.status === "active";
     if (filter === "gold") return m.status === "gold";
@@ -4019,7 +4207,7 @@ function VaultScreen() {
       
       {!focusedMasterId && (
         <h3 className="text-xs font-bold tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-          {(masterLane === "recipe" ? "레시피 마스터 카드보기" : "일반 마스터 카드보기")} · {filter === "active" ? "진행" : filter === "gold" ? "골드" : "실버"} — {filteredMasters.length}개
+          {(masterLane === "habit" ? "습관 마스터 카드보기" : "일반 마스터 카드보기")} · {filter === "active" ? "진행" : filter === "gold" ? "골드" : "실버"} — {filteredMasters.length}개
         </h3>
       )}
       <div className="relative" style={{ marginTop: focusedMasterId ? 40 : 0 }}>
@@ -4029,7 +4217,7 @@ function VaultScreen() {
           return filteredMasters.map((card, i) => {
           const preset = getPreset(card.designPresetId);
           const children = regularCards.filter((r) => r.masterId === card.id);
-          const rChildren = recipeCards.filter((r) => r.masterId === card.id);
+          const rChildren = habitCards.filter((r) => r.masterId === card.id);
           const allChildren = [...children, ...rChildren].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
           const isFocused = focusedMasterId === card.id;
           const isGold = card.status === "gold";
@@ -4465,18 +4653,18 @@ function VaultScreen() {
               type="button"
               className="btn-press p-1.5 rounded-lg cursor-pointer"
               style={{ border: "1px solid var(--border)", background: "var(--surface-1)" }}
-              onClick={() => setMasterLane((p) => (p === "general" ? "recipe" : "general"))}
+              onClick={() => setMasterLane((p) => (p === "general" ? "habit" : "general"))}
             >
               <ChevronLeft size={15} />
             </button>
             <span className="text-xs font-bold" style={{ color: "var(--fg)" }}>
-              {masterLane === "general" ? "일반 마스터 카드보기" : "레시피 마스터 카드보기"}
+              {masterLane === "general" ? "일반 마스터 카드보기" : "습관 마스터 카드보기"}
             </span>
             <button
               type="button"
               className="btn-press p-1.5 rounded-lg cursor-pointer"
               style={{ border: "1px solid var(--border)", background: "var(--surface-1)" }}
-              onClick={() => setMasterLane((p) => (p === "general" ? "recipe" : "general"))}
+              onClick={() => setMasterLane((p) => (p === "general" ? "habit" : "general"))}
             >
               <ChevronRight size={15} />
             </button>
@@ -4549,12 +4737,12 @@ function CreateCardSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  initialType?: "master" | "regular" | "recipe";
+  initialType?: "master" | "regular" | "habit";
 }) {
-  const { addMasterCard, addRegularCard, addRecipeCard, addPresetCard, masterCards, presetCards } = useApp();
+  const { addMasterCard, addRegularCard, addHabitCard, addPresetCard, masterCards, presetCards } = useApp();
   const [step, setStep] = useState<"type" | "form" | "master-success">("type");
   const [createdMasterId, setCreatedMasterId] = useState<string>("");
-  const [selectedType, setSelectedType] = useState<"master" | "preset" | "regular" | "recipe">("regular");
+  const [selectedType, setSelectedType] = useState<"master" | "preset" | "regular" | "habit">("regular");
   const [cardName, setCardName] = useState("");
   const [designId, setDesignId] = useState(CARD_PRESETS[0].id);
   const [hasGoal, setHasGoal] = useState(true);
@@ -4566,7 +4754,8 @@ function CreateCardSheet({
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [recipeContent, setRecipeContent] = useState("");
+  const [habitContent, setHabitContent] = useState("");
+  const [habitGoalDays, setHabitGoalDays] = useState(90);
   const [selectedPresetId, setSelectedPresetId] = useState<string>("");
   const [showPresetAdd, setShowPresetAdd] = useState(false);
   const [presetAddName, setPresetAddName] = useState("");
@@ -4589,20 +4778,21 @@ function CreateCardSheet({
     setScheduleDate("");
     setScheduleTime("09:00");
     setWeekdays([]);
-    setRecipeContent("");
+    setHabitContent("");
+    setHabitGoalDays(90);
     setSelectedPresetId("");
     setShowPresetAdd(false);
     setPresetAddName("");
   };
   const handleClose = () => { reset(); onClose(); };
 
-  const handleTypeSelect = (type: "master" | "regular" | "recipe") => {
+  const handleTypeSelect = (type: "master" | "regular" | "habit") => {
     setSelectedType(type);
     setStep("form");
     if (type === "master") {
       setHasGoal(true);
     }
-    if ((type === "regular" || type === "recipe") && activeMasters.length > 0) {
+    if ((type === "regular" || type === "habit") && activeMasters.length > 0) {
       setMasterId(activeMasters[0].id);
     }
   };
@@ -4652,7 +4842,7 @@ function CreateCardSheet({
       });
     } else {
       if (!masterId) return;
-      addRecipeCard({ type: "recipe", masterId, name: cardName, designPresetId: designId, content: recipeContent });
+      addHabitCard({ type: "habit", masterId, name: cardName, designPresetId: designId, content: habitContent, goalDays: habitGoalDays || 90 });
     }
     handleClose();
   };
@@ -4694,12 +4884,12 @@ function CreateCardSheet({
       border: "rgba(59,130,246,0.2)",
     },
     {
-      id: "recipe" as const,
-      icon: BookOpen,
-      title: "레시피카드",
-      desc: "자주 쓰는 체크리스트나 참고자료를 저장해둬요.",
-      hint: "📋 예: '주간 회고 체크리스트', '운동 루틴 정리'",
-      badge: "템플릿",
+      id: "habit" as const,
+      icon: Target,
+      title: "습관카드",
+      desc: "습관 만들기를 도와주고 유지까지 케어해줘요.",
+      hint: "💪 예: '매일 30분 운동', '아침 명상 10분'",
+      badge: "습관 형성",
       color: "#10B981",
       bg: "rgba(16,185,129,0.06)",
       border: "rgba(16,185,129,0.2)",
@@ -4719,7 +4909,7 @@ function CreateCardSheet({
                 <ChevronRight size={16} color="var(--fg)" style={{ transform: "rotate(180deg)" }} />
               </button>
             )}
-            <h2 className="text-lg font-bold" style={{ color: "var(--fg)" }}>{step === "type" ? "카드 만들기" : step === "master-success" ? "목표 설정 완료!" : `${selectedType === "master" ? "마스터카드" : selectedType === "regular" ? "일반카드" : "레시피카드"} 생성`}</h2>
+            <h2 className="text-lg font-bold" style={{ color: "var(--fg)" }}>{step === "type" ? "카드 만들기" : step === "master-success" ? "목표 설정 완료!" : `${selectedType === "master" ? "마스터카드" : selectedType === "regular" ? "일반카드" : "습관카드"} 생성`}</h2>
           </div>
           <button className="btn-press-sm w-8 h-8 rounded-full flex items-center justify-center cursor-pointer" style={{ background: "var(--surface-2)", border: "none" }} onClick={handleClose}>
             <X size={16} color="var(--fg)" />
@@ -4783,7 +4973,7 @@ function CreateCardSheet({
           ) : (
             <div className="flex flex-col gap-5">
               <div><label className={labelStyle} style={{ color: "var(--text-muted)" }}>카드 이름</label><input placeholder="카드 이름을 입력하세요" value={cardName} onChange={(e) => setCardName(e.target.value)} className={inputStyle} maxLength={30} style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }} /></div>
-              {(selectedType === "regular" || selectedType === "recipe") && (
+              {(selectedType === "regular" || selectedType === "habit") && (
                 <div><label className={labelStyle} style={{ color: "var(--text-muted)" }}>소속 마스터카드</label>
                   {activeMasters.length === 0 ? (
                     <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
@@ -4901,7 +5091,7 @@ function CreateCardSheet({
                         <span className="rounded-full text-[9px] font-bold px-2 py-0.5" style={{ background: "var(--gradient-badge)", color: "#0A0A0A" }}>{preset.limited}</span>
                       )}
                       <span className="text-xs font-bold tracking-wide" style={{ color: "rgba(255,255,255,0.6)" }}>
-                        {selectedType === "master" ? "MASTER" : selectedType === "regular" ? "CARD" : "RECIPE"}
+                        {selectedType === "master" ? "MASTER" : selectedType === "regular" ? "CARD" : "HABIT"}
                       </span>
                     </div>
                   </div>
@@ -5015,10 +5205,17 @@ function CreateCardSheet({
                   )}
                 </div>
               )}
-              {selectedType === "recipe" && (
-                <div>
-                  <label className={labelStyle} style={{ color: "var(--text-muted)" }}>내용</label>
-                  <textarea placeholder="레시피, 참고자료, 아이디어를 자유롭게 입력하세요" value={recipeContent} onChange={(e) => setRecipeContent(e.target.value)} rows={4} className={`${inputStyle} resize-none`} style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }} />
+              {selectedType === "habit" && (
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <label className={labelStyle} style={{ color: "var(--text-muted)" }}>습관 설명</label>
+                    <textarea placeholder="어떤 습관을 만들고 싶은지 설명해주세요" value={habitContent} onChange={(e) => setHabitContent(e.target.value)} rows={3} className={`${inputStyle} resize-none`} style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }} />
+                  </div>
+                  <div>
+                    <label className={labelStyle} style={{ color: "var(--text-muted)" }}>목표 기간 (일)</label>
+                    <input type="number" min={7} max={365} value={habitGoalDays} onChange={(e) => setHabitGoalDays(Math.max(7, Math.min(365, Number(e.target.value) || 90)))} className={inputStyle} style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--fg)" }} />
+                    <p className="text-[11px] mt-1.5" style={{ color: "var(--text-faint)" }}>70% 이상 달성하면 골드카드로 승급해요!</p>
+                  </div>
                 </div>
               )}
 
@@ -5648,7 +5845,7 @@ const WELCOME_SHOWN_KEY = "todowallet_welcome_shown_v1";
 function AppShell() {
   const { activeTab, setActiveTab, profile, regularCards, isAdmin, tick, pendingUndo, undoPendingRegularCompletion } = useApp();
   const [createOpen, setCreateOpen] = useState(false);
-  const [createInitialType, setCreateInitialType] = useState<"master" | "regular" | "recipe" | undefined>(undefined);
+  const [createInitialType, setCreateInitialType] = useState<"master" | "regular" | "habit" | undefined>(undefined);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileIsWelcome, setProfileIsWelcome] = useState(false);
   const [profileSetupAutoOpenUsed, setProfileSetupAutoOpenUsed] = useState(false);
